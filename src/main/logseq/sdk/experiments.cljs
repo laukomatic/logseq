@@ -1,6 +1,7 @@
 (ns logseq.sdk.experiments
   (:require [frontend.components.page :as page]
             [frontend.handler.plugin :as plugin-handler]
+            [lambdaisland.glogi :as log]
             [frontend.state :as state]
             [frontend.util :as util]
             [logseq.sdk.utils :as sdk-util]))
@@ -61,6 +62,25 @@
                            {} [:when :mode :priority :subs :render])]
       (plugin-handler/register-block-properties-renderer
        (keyword pid) key clj-opts))))
+
+(defn ^:export register_block_renderer
+  [pid key ^js opts]
+  (when-let [^js _pl (plugin-handler/get-plugin-inst pid)]
+    (let [when-predicate (aget opts "when")]
+      (if (and (some? when-predicate) (not (fn? when-predicate)))
+        (log/error :register-block-renderer-invalid-when
+                   {:pid pid
+                    :key key
+                    :message "`when` for registerBlockRenderer must be a synchronous predicate function."})
+        (let [clj-opts (reduce (fn [r k]
+                                 (let [v (aget opts (name k))]
+                                   (if (some? v)
+                                     (assoc r k v)
+                                     r)))
+                               {}
+                               [:when :priority :subs :render])]
+          (plugin-handler/register-block-renderer
+           (keyword pid) key clj-opts))))))
 
 (defn ^:export register_extensions_enhancer
   [pid type enhancer]

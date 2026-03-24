@@ -19,8 +19,19 @@ export type BlockPropertiesRendererProps = {
   properties: Record<string, any>
 }
 
+export type BlockRendererProps = BlockPropertiesRendererProps & {
+  uuid?: string
+  page?: string
+  content?: string
+  format?: string
+}
+
 export type BlockPropertiesPredicate = (
   props: BlockPropertiesRendererProps
+) => boolean
+
+export type BlockRendererPredicate = (
+  props: BlockRendererProps
 ) => boolean
 
 /**
@@ -189,6 +200,36 @@ export class LSPluginExperiments {
   ) {
     return this.invokeExperMethod(
       'registerBlockPropertiesRenderer',
+      this.ctx.baseInfo.id,
+      key,
+      opts
+    )
+  }
+
+  /**
+   * Register a custom renderer for the block body.
+   * When the synchronous predicate matches, the plugin renderer replaces the
+   * default outline view by default. Users can switch back to outline view via
+   * an explicit UI toggle on each matched block.
+   *
+   * @param key Unique key for this renderer (scoped to the plugin).
+   * @param opts Renderer options.
+   * @param opts.when Optional synchronous predicate; if omitted, always matches.
+   * @param opts.priority Higher number wins when multiple block renderers match.
+   * @param opts.subs Reserved subscription list for future reactive updates.
+   * @param opts.render React function component receiving block renderer props.
+   */
+  registerBlockRenderer(
+    key: string,
+    opts: {
+      when?: BlockRendererPredicate
+      priority?: number
+      subs?: Array<string>
+      render: (props: BlockRendererProps) => any
+    }
+  ) {
+    return this.invokeExperMethod(
+      'registerBlockRenderer',
       this.ctx.baseInfo.id,
       key,
       opts

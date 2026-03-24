@@ -287,6 +287,68 @@ logseq.Experiments.registerRouteRenderer('my-custom-page', {
 logseq.App.pushState('page', { name: 'my-plugin-dashboard' })
 ```
 
+### 5.4 Block Properties Renderer
+
+Register custom UI for the block properties area.
+
+#### `logseq.Experiments.registerBlockPropertiesRenderer(key: string, opts: object)`
+
+**Highlights**:
+
+- `when` supports either a declarative condition DSL or a synchronous predicate.
+- `mode` supports `prepend`, `append`, and `replace`.
+- Multiple renderers may match; `replace` uses the highest `priority`.
+
+```typescript
+logseq.Experiments.registerBlockPropertiesRenderer('task-properties', {
+  when: { has: 'logseq.property/status' },
+  mode: 'append',
+  render: ({ blockId, properties }) => {
+    const React = logseq.Experiments.React
+    return React.createElement(
+      'div',
+      null,
+      `#${blockId} · ${properties['logseq.property/status']}`
+    )
+  }
+})
+```
+
+See also: [`block-properties-renderer-api.md`](./block-properties-renderer-api.md)
+
+### 5.5 Block Renderer
+
+Register a custom renderer for the block body itself.
+
+#### `logseq.Experiments.registerBlockRenderer(key: string, opts: object)`
+
+**Highlights**:
+
+- `when` currently supports **only a synchronous predicate**.
+- When matched, the plugin renderer **replaces the default outline view by default**.
+- Logseq keeps an explicit per-block toggle so users can switch between outline view and the plugin renderer.
+- While the block is being edited, Logseq always falls back to the normal outline/editor UI.
+- Predicate errors, Promise-returning predicates, and renderer errors all fall back to the original outline.
+
+```typescript
+logseq.Experiments.registerBlockRenderer('task-card', {
+  when: ({ properties, content }) => {
+    return properties['logseq.property/status'] === 'Todo' && !!content
+  },
+  priority: 10,
+  render: ({ blockId, page, content }) => {
+    const React = logseq.Experiments.React
+    return React.createElement('section', null, [
+      React.createElement('h3', { key: 'page' }, page ?? 'Untitled'),
+      React.createElement('div', { key: 'id' }, `#${blockId}`),
+      React.createElement('p', { key: 'content' }, content ?? '')
+    ])
+  }
+})
+```
+
+See also: [`block-renderer-api.md`](./block-renderer-api.md)
+
 ---
 
 ## 6. Extension Enhancers
@@ -447,6 +509,8 @@ logseq.ready(main).catch(console.error)
 - [Starter Guide](./starter_guide.md) - Getting started with plugin development
 - [DB Properties Guide](./db_properties_guide.md) - Working with database properties
 - [DB Query Guide](./db_query_guide.md) - Querying the Logseq database
+- [Block Properties Renderer API](./block-properties-renderer-api.md) - Experimental property-area renderer details
+- [Block Renderer API](./block-renderer-api.md) - Experimental block-body renderer details
 
 ---
 

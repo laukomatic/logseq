@@ -531,16 +531,24 @@
                                         (some-> (:key %) (str) (string/includes? (str "." key))))
                                     (some->> type (name) (= (:type %)))))))
 
-;; Block properties area renderer
-(defn- normalize-block-properties-match-context
-  [{:keys [block-id properties-map props] :as match-context}]
+;; Block renderers
+(defn- ->block-renderer-properties-js
+  [properties-map]
+  (into {} (map (fn [[k v]] [(subs (str k) 1) v]) properties-map)))
+
+(defn- normalize-block-renderer-match-context
+  [{:keys [block-id properties-map props uuid page content format] :as match-context}]
   (if (contains? match-context :properties-map)
     (assoc match-context
            :props
            (or props
-               (clj->js {:blockId block-id
-                         :properties (into {} (map (fn [[k v]] [(subs (str k) 1) v]) properties-map))})))
-    (normalize-block-properties-match-context {:properties-map match-context})))
+               (clj->js (cond-> {:blockId block-id
+                                 :properties (->block-renderer-properties-js properties-map)}
+                          uuid (assoc :uuid uuid)
+                          page (assoc :page page)
+                          content (assoc :content content)
+                          format (assoc :format format)))))
+    (normalize-block-renderer-match-context {:properties-map match-context})))
 
 (defn- promise-like?
   [result]
@@ -569,13 +577,35 @@
                   :error error})
       false)))
 
+(defn- match-block-renderer-predicate
+  [predicate {:keys [props]} {:keys [pid key]}]
+  (try
+    (let [result (predicate props)]
+      (cond
+        (promise-like? result)
+        (do
+          (log/error :block-renderer-predicate-async
+                     {:pid pid
+                      :key key
+                      :message "`when` predicate for block renderer must return synchronously."})
+          false)
+
+        :else
+        (boolean result)))
+    (catch :default error
+      (log/error :block-renderer-predicate-exception
+                 {:pid pid
+                  :key key
+                  :error error})
+      false)))
+
 (defn match-block-properties-condition
   "Match a block-properties renderer condition against a block.
    condition may be nil, a declarative condition map like {:has `ident`},
    or a synchronous predicate receiving JS props {:blockId :properties}.
    properties-map is a map of keyword db-idents -> values."
   [condition match-context renderer]
-  (let [{:keys [properties-map] :as match-context'} (normalize-block-properties-match-context match-context)]
+  (let [{:keys [properties-map] :as match-context'} (normalize-block-renderer-match-context match-context)]
     (cond
       (nil? condition)
       true
@@ -599,6 +629,36 @@
 
 (defonce *block-properties-renderer-providers (atom #{}))
 
+(defonce *block-renderer-providers (atom #{}))
+
+(def register-block-renderer
+  ;; [pid key payload] payload keys: :when :priority :subs :render
+  (create-local-renderer-register
+   :block-renderers *block-renderer-providers))
+
+(def get-block-renderers
+  ;; [] - get all
+  (create-local-renderer-getter
+   :block-renderers *block-renderer-providers true))
+
+(defn any-block-renderers?
+  []
+  (boolean (seq (get-block-renderers nil))))
+
+(defn get-matched-block-renderer
+  "Return the highest priority matched block renderer for a block."
+  [match-context]
+  (when-let [rs (get-block-renderers nil)]
+    (let [match-context' (normalize-block-renderer-match-context match-context)]
+      (->> rs
+           (filter (fn [renderer]
+                     (let [predicate (:when renderer)]
+                       (if predicate
+                         (match-block-renderer-predicate predicate match-context' renderer)
+                         true))))
+           (sort-by #(- (or (:priority %) 0)))
+           first))))
+
 (def register-block-properties-renderer
   ;; [pid key payload]  payload keys: :when :mode :priority :subs :render
   (create-local-renderer-register
@@ -614,7 +674,7 @@
    matches the given properties-map.  Sorted by :priority descending."
   [match-context]
   (when-let [rs (get-block-properties-renderers nil)]
-    (let [match-context' (normalize-block-properties-match-context match-context)]
+    (let [match-context' (normalize-block-renderer-match-context match-context)]
       (->> rs
            (filter #(match-block-properties-condition (:when %) match-context' %))
            (sort-by #(- (or (:priority %) 0)))))))
