@@ -78,7 +78,7 @@
 
     .topic-card, .link-card {
       @apply text-sm px-3 py-2.5 rounded-lg cursor-pointer
-      mb-2 active:opacity-90 select-none items-start;
+      mb-2 active:opacity-90 select-none items-center;
 
       background-color: var(--ls-secondary-background-color1);
       border: 1px solid var(--ls-border-color);
@@ -109,9 +109,10 @@
 
         > span {
           @apply text-xs opacity-40 leading-4;
-          white-space: nowrap;
+          display: -webkit-box;
+          -webkit-box-orient: vertical;
+          -webkit-line-clamp: var(--desc-clamp, 1);
           overflow: hidden;
-          text-overflow: ellipsis;
         }
       }
 

@@ -99,16 +99,27 @@
 
 (rum/defc topic-card
   [{:keys [key title description cover] :as _topic} nav-fn! opts]
-  [:button.w-full.topic-card.flex.text-left
-   (merge
-    {:key      key
-     :on-click nav-fn!} opts)
-   (when cover
-     [:div.l.flex.items-start
-      [:img {:src (resolve-asset-url cover)}]])
-   [:div.r.flex.flex-col
-    [:strong title]
-    [:span description]]])
+  (let [*title-ref (rum/use-ref nil)
+        *r-ref (rum/use-ref nil)]
+    (hooks/use-layout-effect!
+     (fn []
+       (when-let [^js title-el (rum/deref *title-ref)]
+         (when-let [^js r-el (rum/deref *r-ref)]
+           (let [h (.-offsetHeight title-el)
+                 title-lines (js/Math.round (/ h 18))
+                 clamp-val (case title-lines 1 "2" 2 "1" "0")]
+             (.setProperty (.-style r-el) "--desc-clamp" clamp-val)))))
+     [])
+    [:button.w-full.topic-card.flex.text-left
+     (merge
+      {:key      key
+       :on-click nav-fn!} opts)
+     (when cover
+       [:div.l.flex.items-center
+        [:img {:src (resolve-asset-url cover)}]])
+     [:div.r.flex.flex-col {:ref *r-ref}
+      [:strong {:ref *title-ref} title]
+      [:span description]]]))
 
 (rum/defc pane-category-topics
   [handbook-nodes pane-state nav!]
