@@ -532,25 +532,70 @@
                                     (some->> type (name) (= (:type %)))))))
 
 ;; Block properties area renderer
+(defn- normalize-block-properties-match-context
+  [{:keys [block-id properties-map props] :as match-context}]
+  (if (contains? match-context :properties-map)
+    (assoc match-context
+           :props
+           (or props
+               (clj->js {:blockId block-id
+                         :properties (into {} (map (fn [[k v]] [(subs (str k) 1) v]) properties-map))})))
+    (normalize-block-properties-match-context {:properties-map match-context})))
+
+(defn- promise-like?
+  [result]
+  (or (instance? js/Promise result)
+      (some-> result (aget "then") fn?)))
+
+(defn- match-block-properties-predicate
+  [predicate {:keys [props]} {:keys [pid key]}]
+  (try
+    (let [result (predicate props)]
+      (cond
+        (promise-like? result)
+        (do
+          (log/error :block-properties-renderer-predicate-async
+                     {:pid pid
+                      :key key
+                      :message "`when` predicate for block properties renderer must return synchronously."})
+          false)
+
+        :else
+        (boolean result)))
+    (catch :default error
+      (log/error :block-properties-renderer-predicate-exception
+                 {:pid pid
+                  :key key
+                  :error error})
+      false)))
+
 (defn match-block-properties-condition
-  "Match a declarative condition map against a block's properties map.
-   condition is a Clojure map like {:has \"ident\"}, {:equals [\"ident\" val]}, etc.
+  "Match a block-properties renderer condition against a block.
+   condition may be nil, a declarative condition map like {:has `ident`},
+   or a synchronous predicate receiving JS props {:blockId :properties}.
    properties-map is a map of keyword db-idents -> values."
-  [condition properties-map]
-  (if (nil? condition)
-    true
-    (let [op  (some-> condition first key)
-          arg (some-> condition first val)]
-      (case op
-        :has    (contains? properties-map (keyword arg))
-        :equals (let [[prop-key expected] arg]
-                  (= (get properties-map (keyword prop-key)) expected))
-        :in     (let [[prop-key coll] arg]
-                  (contains? (set coll) (get properties-map (keyword prop-key))))
-        :not    (not (match-block-properties-condition arg properties-map))
-        :any    (some  #(match-block-properties-condition % properties-map) arg)
-        :all    (every? #(match-block-properties-condition % properties-map) arg)
-        true))))
+  [condition match-context renderer]
+  (let [{:keys [properties-map] :as match-context'} (normalize-block-properties-match-context match-context)]
+    (cond
+      (nil? condition)
+      true
+
+      (fn? condition)
+      (match-block-properties-predicate condition match-context' renderer)
+
+      :else
+      (let [op  (some-> condition first key)
+            arg (some-> condition first val)]
+        (case op
+          :has    (contains? properties-map (keyword arg))
+          :equals (let [[prop-key expected] arg]
+                    (= (get properties-map (keyword prop-key)) expected))
+          :in     (let [[prop-key coll] arg]
+                    (contains? (set coll) (get properties-map (keyword prop-key))))
+          :not    (not (match-block-properties-condition arg match-context' renderer))
+          :any    (some #(match-block-properties-condition % match-context' renderer) arg)
+          :all    (every? #(match-block-properties-condition % match-context' renderer) arg)
+          true)))))
 
 (defonce *block-properties-renderer-providers (atom #{}))
 
@@ -567,11 +612,12 @@
 (defn get-matched-block-properties-renderers
   "Return all registered block-properties renderers whose :when condition
    matches the given properties-map.  Sorted by :priority descending."
-  [properties-map]
+  [match-context]
   (when-let [rs (get-block-properties-renderers nil)]
-    (->> rs
-         (filter #(match-block-properties-condition (:when %) properties-map))
-         (sort-by #(- (or (:priority %) 0))))))
+    (let [match-context' (normalize-block-properties-match-context match-context)]
+      (->> rs
+           (filter #(match-block-properties-condition (:when %) match-context' %))
+           (sort-by #(- (or (:priority %) 0)))))))
 
 (defn select-a-plugin-theme
   [pid]

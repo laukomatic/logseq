@@ -765,15 +765,18 @@
                plugin-properties   (->> (concat full-properties hidden-properties)
                                         (remove (fn [[k _v]] (= k :logseq.property.class/properties)))
                                         (into {}))
-               plugin-renderers    (when (and config/lsp-enabled? (not class?))
-                                     (plugin-handler/get-matched-block-properties-renderers plugin-properties))
-               prepend-renderers   (filter #(= "prepend" (:mode %)) plugin-renderers)
-               replace-renderer    (first (filter #(= "replace" (:mode %)) plugin-renderers))
-               append-renderers    (remove #(contains? #{"prepend" "replace"} (:mode %)) plugin-renderers)
-               props-for-plugin    (when (seq plugin-renderers)
+               props-for-plugin    (when (and config/lsp-enabled? (not class?))
                                      (clj->js {:blockId    (str (:block/uuid block))
                                                :properties (into {} (map (fn [[k v]] [(subs (str k) 1) v])
-                                                                         plugin-properties))}))]
+                                                                         plugin-properties))}))
+               plugin-renderers    (when props-for-plugin
+                                     (plugin-handler/get-matched-block-properties-renderers
+                                      {:block-id      (str (:block/uuid block))
+                                       :properties-map plugin-properties
+                                       :props          props-for-plugin}))
+               prepend-renderers   (filter #(= "prepend" (:mode %)) plugin-renderers)
+               replace-renderer    (first (filter #(= "replace" (:mode %)) plugin-renderers))
+               append-renderers    (remove #(contains? #{"prepend" "replace"} (:mode %)) plugin-renderers)]
            [:div.ls-properties-area
             {:id id
              :class (util/classnames [{:ls-page-properties page?}])

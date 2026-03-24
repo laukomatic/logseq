@@ -53,7 +53,9 @@
                              (let [v (aget opts (name k))]
                                (if (some? v)
                                  (assoc r k (if (= :when k)
-                                              (js->clj v :keywordize-keys true)
+                                               (if (fn? v)
+                                                 v
+                                                 (js->clj v :keywordize-keys true))
                                               v))
                                  r)))
                            {} [:when :mode :priority :subs :render])]

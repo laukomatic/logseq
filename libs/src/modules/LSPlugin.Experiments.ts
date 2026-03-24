@@ -14,6 +14,15 @@ export type BlockPropertiesCondition =
   | { any: Array<BlockPropertiesCondition> }
   | { all: Array<BlockPropertiesCondition> }
 
+export type BlockPropertiesRendererProps = {
+  blockId: string
+  properties: Record<string, any>
+}
+
+export type BlockPropertiesPredicate = (
+  props: BlockPropertiesRendererProps
+) => boolean
+
 /**
  * WARN: These are some experience features and might be adjusted at any time.
  * These unofficial plugins that use these APIs are temporarily
@@ -158,10 +167,11 @@ export class LSPluginExperiments {
   /**
    * Register a custom renderer for the block properties area.
    * The renderer is shown when the block's properties match the `when` condition.
+   * `when` may be either a declarative condition object or a synchronous predicate.
    *
    * @param key Unique key for this renderer (scoped to the plugin).
    * @param opts Renderer options.
-   * @param opts.when Optional condition; if omitted, always matches.
+   * @param opts.when Optional condition or synchronous predicate; if omitted, always matches.
    * @param opts.mode "prepend" | "append" (default) | "replace".
    * @param opts.priority Higher number wins when multiple replace renderers match.
    * @param opts.subs Reserved subscription list for future reactive updates.
@@ -170,11 +180,11 @@ export class LSPluginExperiments {
   registerBlockPropertiesRenderer(
     key: string,
     opts: {
-      when?: BlockPropertiesCondition
+      when?: BlockPropertiesCondition | BlockPropertiesPredicate
       mode?: 'prepend' | 'append' | 'replace'
       priority?: number
       subs?: Array<string>
-      render: (props: { blockId: string; properties: Record<string, any> }) => any
+      render: (props: BlockPropertiesRendererProps) => any
     }
   ) {
     return this.invokeExperMethod(
