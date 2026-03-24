@@ -104,7 +104,7 @@
     {:key      key
      :on-click nav-fn!} opts)
    (when cover
-     [:div.l.flex.items-center
+     [:div.l.flex.items-start
       [:img {:src (resolve-asset-url cover)}]])
    [:div.r.flex.flex-col
     [:strong title]

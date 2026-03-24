@@ -78,14 +78,14 @@
 
     .topic-card, .link-card {
       @apply text-sm px-3 py-2.5 rounded-lg cursor-pointer
-      mb-2 active:opacity-90 select-none items-center;
+      mb-2 active:opacity-90 select-none items-start;
 
       background-color: var(--ls-secondary-background-color1);
       border: 1px solid var(--ls-border-color);
       transition: background-color .3s;
 
       > .l {
-        @apply pr-2.5 w-[80px] min-h-[64px] bg-transparent rounded overflow-hidden;
+        @apply pr-2.5 w-[80px] min-h-[64px] bg-transparent rounded overflow-hidden shrink-0;
 
         img {
           mix-blend-mode: luminosity;
@@ -96,14 +96,22 @@
       }
 
       > .r {
-        @apply leading-none flex-1;
+        @apply leading-none flex-1 min-w-0;
 
         > strong {
-          @apply font-medium text-sm pt-0.5 pb-[1px] opacity-90 leading-5 dark:text-gray-50;
+          @apply font-medium text-sm pt-0.5 pb-[3px] opacity-90 leading-[18px] dark:text-gray-50;
+          display: -webkit-box;
+          -webkit-box-orient: vertical;
+          -webkit-line-clamp: 2;
+          overflow: hidden;
+          text-wrap: balance;
         }
 
         > span {
           @apply text-xs opacity-40 leading-4;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
       }
 
