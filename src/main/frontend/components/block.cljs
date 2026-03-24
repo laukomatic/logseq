@@ -3130,6 +3130,12 @@
      :properties-map properties-map
      :props (clj->js props)}))
 
+(defn- block-renderer-supported-view?
+  [{:keys [sidebar?]} property? table?]
+  (and (not sidebar?)
+       (not property?)
+       (not table?)))
+
 (defn- block-renderer-display-mode
   [{:keys [matched-block-renderer use-plugin-renderer? editing? plugin-renderer-error?]}]
   (if (and matched-block-renderer use-plugin-renderer? (not editing?) (not plugin-renderer-error?))
@@ -3297,8 +3303,7 @@
         block-renderer-match-context
         (when (and config/lsp-enabled?
                    (plugin-handler/any-block-renderers?)
-                   (not property?)
-                   (not table?))
+                   (block-renderer-supported-view? config property? table?))
           (build-block-renderer-match-context block))
         block-renderer-props-js (:props block-renderer-match-context)
         matched-block-renderer

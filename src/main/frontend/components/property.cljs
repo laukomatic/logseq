@@ -65,6 +65,13 @@
           property)
         (notification/show! "This is an invalid property name. A property name cannot start with page reference characters '#' or '[['." :error)))))
 
+(defn- enable-block-properties-renderers?
+  [{:keys [sidebar? sidebar-properties?]} class?]
+  (and config/lsp-enabled?
+       (not class?)
+       (not sidebar?)
+       (not sidebar-properties?)))
+
 ;; TODO: This component should be cleaned up as it's only used for new properties and used to be used for existing properties
 (rum/defcs property-type-select <
   shortcut/disable-all-shortcuts
@@ -765,7 +772,7 @@
                plugin-properties   (->> (concat full-properties hidden-properties)
                                         (remove (fn [[k _v]] (= k :logseq.property.class/properties)))
                                         (into {}))
-               props-for-plugin    (when (and config/lsp-enabled? (not class?))
+               props-for-plugin    (when (enable-block-properties-renderers? opts class?)
                                      (clj->js {:blockId    (str (:block/uuid block))
                                                :properties (into {} (map (fn [[k v]] [(subs (str k) 1) v])
                                                                          plugin-properties))}))
