@@ -19,6 +19,10 @@
         text-align: left;
         width: 266px;
       }
+
+      .ui__dropdown-menu-trigger button {
+        @apply hover:opacity-80 transition-opacity;
+      }
     }
 
     &.scrolled {

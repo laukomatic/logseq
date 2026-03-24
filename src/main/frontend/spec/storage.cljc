@@ -8,6 +8,7 @@
 (s/def ::ls-left-sidebar-open? boolean?)
 (s/def ::ls-cmdk-last-search map?)
 (s/def :ui/theme string?)
+(s/def :ui/handbook-version string?)
 (s/def :ui/system-theme? boolean?)
 (s/def ::lsp-core-enabled boolean?)
 (s/def ::http-server-enabled boolean?)
@@ -48,6 +49,7 @@
             ::ls-left-sidebar-open?
             ::ls-cmdk-last-search
             :ui/theme
+            :ui/handbook-version
             :ui/system-theme?
             :ui/recent-pages
             ::lsp-core-enabled

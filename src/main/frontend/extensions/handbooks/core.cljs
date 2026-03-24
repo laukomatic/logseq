@@ -17,6 +17,7 @@
             [frontend.ui :as ui]
             [frontend.util :as util]
             [logseq.shui.hooks :as hooks]
+            [logseq.shui.ui :as shui]
             [medley.core :as medley]
             [promesa.core :as p]
             [rum.core :as rum]))
@@ -72,6 +73,22 @@
     (and (string? key)
          (string/includes? key "/"))
     (assoc :parent (parse-parent-key key))))
+
+(defn- resolve-handbook-version
+  "Resolves 'auto' to 'db' or 'classic' based on current graph type.
+   Manual overrides pass through unchanged."
+  [preference current-repo]
+  (if (= preference "auto")
+    (if (config/db-based-graph? current-repo) "db" "classic")
+    preference))
+
+(defn- resolve-handbook-data
+  "Extracts the right edition subtree from handbook data.
+   Handles both legacy flat format and new {:md {...} :db {...}} format."
+  [raw-data resolved-version]
+  (if (and (map? raw-data) (contains? raw-data :db))
+    (get raw-data (if (= resolved-version "db") :db :md) (:md raw-data))
+    raw-data))
 
 (defn load-glide-assets!
   []
@@ -477,10 +494,42 @@
           [:strong.opacity-60 "800+"]
           [:span.opacity-70.font-light " monthly posts"]]]])]]))
 
+(rum/defc version-dropdown
+  [resolved-version]
+  (let [version-label (if (= resolved-version "db")
+                        (t :handbook/version-logseq)
+                        (t :handbook/version-classic))]
+    (shui/dropdown-menu
+     (shui/dropdown-menu-trigger
+      {:asChild true}
+      [:button.flex.items-center.gap-1.text-xl.font-bold.cursor-pointer.select-none
+       {:aria-label "Select handbook version"}
+       version-label
+       (ui/icon "chevron-down" {:size 14})])
+     (shui/dropdown-menu-content
+      {:align "start" :class "w-56"}
+      (shui/dropdown-menu-radio-group
+       {:value resolved-version
+        :onValueChange state/set-handbook-version!}
+       (shui/dropdown-menu-radio-item
+        {:value "db"}
+        [:span.flex.flex-col
+         [:span (t :handbook/version-logseq)]
+         [:span.text-xs.opacity-50 (t :handbook/for-db-graphs)]])
+       (shui/dropdown-menu-radio-item
+        {:value "classic"}
+        [:span.flex.flex-col
+         [:span (t :handbook/version-classic)]
+         [:span.text-xs.opacity-50 (t :handbook/for-file-graphs)]]))))))
+
 (rum/defc ^:large-vars/data-var content
   []
   (let [[active-pane-state, set-active-pane-state!]
         (rum/use-state [:dashboard nil (t :handbook/title)])
+
+        [handbook-version _] (hooks/use-atom-in state/state [:ui/handbook-version])
+        [current-repo _] (hooks/use-atom-in state/state [:git/current-repo])
+        resolved-version (resolve-handbook-version handbook-version current-repo)
 
         [handbooks-state, set-handbooks-state!]
         (rum/use-state nil)
@@ -575,11 +624,20 @@
     (hooks/use-effect!
      (fn []
        (when handbooks-data
-         (let [nodes (->> (tree-seq map? :children handbooks-data)
+         (let [edition-data (resolve-handbook-data handbooks-data resolved-version)
+               nodes (->> (tree-seq map? :children edition-data)
                           (reduce #(assoc %1 (or (:key %2) "__root") (bind-parent-key %2)) {}))]
            (set-handbooks-nodes! nodes)
            (set! (.-handbook-nodes js/window) (bean/->js nodes)))))
-     [handbooks-data])
+     [handbooks-data resolved-version])
+
+    ;; Reset to dashboard when edition changes (avoid stranding on nonexistent topic)
+    (hooks/use-effect!
+     (fn []
+       (when handbooks-nodes
+         (set-active-pane-state! [:dashboard nil (t :handbook/title)])
+         (set-history-state! '())))
+     [resolved-version])
 
     [:div.cp__handbooks-content
      {:class     (util/classnames [{:search-active (:active? search-state)
@@ -587,9 +645,9 @@
       :on-scroll on-scroll}
      [:div.pane-wrap
       [:div.hd.flex.justify-between.select-none.draggable-handle
-       [:h1.text-xl.flex.items-center.font-bold
+       [(if pane-dashboard? :div.flex.items-center :h1.text-xl.flex.items-center.font-bold)
         (if pane-dashboard?
-          [:span (t :handbook/title)]
+          (version-dropdown resolved-version)
           [:button.active:opacity-80.flex.items-center.cursor-pointer
            {:on-click (fn [] (let [prev (first history-state)
                                    prev (cond-> prev

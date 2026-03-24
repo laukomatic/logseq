@@ -106,6 +106,7 @@
       :ui/recent-pages                       (or (storage/get :ui/recent-pages) {})
 
       ;; right sidebar
+      :ui/handbook-version                   (or (storage/get :ui/handbook-version) "auto")
       :ui/handbooks-open?                    false
       :ui/help-open?                         false
       :ui/fullscreen?                        false
@@ -2011,6 +2012,10 @@ Similar to re-frame subscriptions"
 (defn get-handbook-route-chan
   []
   (:handbook/route-chan @state))
+
+(defn set-handbook-version! [version]
+  (set-state! :ui/handbook-version version)
+  (storage/set :ui/handbook-version version))
 
 (defn open-handbook-pane!
   [k]
