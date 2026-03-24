@@ -531,6 +531,14 @@
                                         (some-> (:key %) (str) (string/includes? (str "." key))))
                                     (some->> type (name) (= (:type %)))))))
 
+(defn add-right-sidebar-plugin-renderer-item!
+  [pid key]
+  (let [repo (state/get-current-repo)
+        key' (keyword (str "_sidebar." (name key)))]
+    (when-let [id' (and (seq (get-hosted-renderers key'))
+                        (str (name pid) "." (name key)))]
+      (state/sidebar-add-block! repo id' :plugin))))
+
 ;; Block renderers
 (defn- ->block-renderer-properties-js
   [properties-map]
