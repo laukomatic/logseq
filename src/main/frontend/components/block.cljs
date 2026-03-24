@@ -3117,7 +3117,10 @@
                               (remove (fn [[property-id _]] (= property-id :logseq.property.class/properties)))
                               (into {})))
         props (cond-> {:blockId uuid-str
-                       :properties (into {} (map (fn [[k v]] [(subs (str k) 1) v]) properties-map))}
+                       :properties (into {} (map (fn [[k v]]
+                                                   [(subs (str k) 1)
+                                                    (plugin-handler/serialize-property-value-for-plugin v)])
+                                                 properties-map))}
                 uuid-str (assoc :uuid uuid-str)
                 page-title (assoc :page page-title)
                 (:block/title block) (assoc :content (:block/title block))

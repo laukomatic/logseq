@@ -774,7 +774,9 @@
                                         (into {}))
                props-for-plugin    (when (enable-block-properties-renderers? opts class?)
                                      (clj->js {:blockId    (str (:block/uuid block))
-                                               :properties (into {} (map (fn [[k v]] [(subs (str k) 1) v])
+                                               :properties (into {} (map (fn [[k v]]
+                                                                           [(subs (str k) 1)
+                                                                            (plugin-handler/serialize-property-value-for-plugin v)])
                                                                          plugin-properties))}))
                plugin-renderers    (when props-for-plugin
                                      (plugin-handler/get-matched-block-properties-renderers
