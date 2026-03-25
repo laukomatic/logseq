@@ -81,6 +81,7 @@
             [logseq.graph-parser.mldoc :as gp-mldoc]
             [logseq.graph-parser.text :as text]
             [logseq.outliner.property :as outliner-property]
+             [logseq.sdk.utils :as sdk-util]
             [logseq.shui.dialog.core :as shui-dialog]
             [logseq.shui.hooks :as hooks]
             [logseq.shui.ui :as shui]
@@ -3102,8 +3103,24 @@
       [block* result]
       [nil result])))
 
-(defn- build-block-renderer-match-context
+(defn- build-block-renderer-children-props
   [block]
+  (when-let [block-uuid (:block/uuid block)]
+    (let [repo (state/get-current-repo)
+          blocks (some->> (db/get-block-and-children repo block-uuid)
+                          (map (fn [child-block]
+                                 (dissoc (db/pull (:db/id child-block)) :block.temp/load-status))))]
+      (or (some-> blocks
+                  (tree/blocks->vec-tree block-uuid)
+                  first
+                  :block/children
+                  sdk-util/normalize-keyword-for-json)
+          []))))
+
+(defn- build-block-renderer-match-context
+  ([block]
+   (build-block-renderer-match-context block false))
+  ([block include-children?]
   (let [uuid-str (some-> (:block/uuid block) str)
         page-title (or (some-> (:block/page block) :block/title)
                        (when (ldb/page? block) (:block/title block)))
@@ -3115,7 +3132,9 @@
                               (into {}))
                          (->> (:block/properties block)
                               (remove (fn [[property-id _]] (= property-id :logseq.property.class/properties)))
-                              (into {})))
+                               (into {})))
+         children (when include-children?
+                    (build-block-renderer-children-props block))
         props (cond-> {:blockId uuid-str
                        :properties (into {} (map (fn [[k v]]
                                                    [(subs (str k) 1)
@@ -3124,14 +3143,15 @@
                 uuid-str (assoc :uuid uuid-str)
                 page-title (assoc :page page-title)
                 (:block/title block) (assoc :content (:block/title block))
-                (get block :block/format :markdown) (assoc :format (name (get block :block/format :markdown))))]
+                 (get block :block/format :markdown) (assoc :format (name (get block :block/format :markdown)))
+                 include-children? (assoc :children children))]
     {:block-id uuid-str
      :uuid uuid-str
      :page page-title
      :content (:block/title block)
      :format (some-> (get block :block/format :markdown) name)
      :properties-map properties-map
-     :props (clj->js props)}))
+     :props (clj->js props)})))
 
 (defn- block-renderer-supported-view?
   [{:keys [sidebar?]} property? table?]
@@ -3152,6 +3172,11 @@
 (defn- show-block-renderer-outline-toggle?
   [display-mode]
   (= :plugin display-mode))
+
+(defn- block-renderer-hides-outline-children?
+  [display-mode {:keys [matched-block-renderer]}]
+  (boolean (and (= :plugin display-mode)
+                (true? (:include-children matched-block-renderer)))))
 
 (defn- block-renderer-outline-view
   [config block uuid title table? property? edit-input-id editing? refs-count *hide-block-refs? *show-query? page-icon block-id collapsed?]
@@ -3303,15 +3328,19 @@
                                                                                         (:page-title? config) 38
                                                                                         :else 18)}}})])))
         ;; --- block renderer (full-block plugin replacement) ---
-        block-renderer-match-context
+        block-renderer-base-match-context
         (when (and config/lsp-enabled?
                    (plugin-handler/any-block-renderers?)
                    (block-renderer-supported-view? config property? table?))
-          (build-block-renderer-match-context block))
-        block-renderer-props-js (:props block-renderer-match-context)
+          (build-block-renderer-match-context block false))
         matched-block-renderer
-        (when (and block-renderer-props-js (not editing?))
-          (plugin-handler/get-matched-block-renderer block-renderer-match-context))
+        (when (and (:props block-renderer-base-match-context) (not editing?))
+          (plugin-handler/get-matched-block-renderer block-renderer-base-match-context))
+        block-renderer-match-context
+        (if (true? (:include-children matched-block-renderer))
+          (build-block-renderer-match-context block true)
+          block-renderer-base-match-context)
+        block-renderer-props-js (:props block-renderer-match-context)
         renderer-display-mode
         (block-renderer-display-mode {:matched-block-renderer matched-block-renderer
                                       :use-plugin-renderer? use-plugin-renderer?
@@ -3515,7 +3544,12 @@
                                 (if advanced-query? result {:builder nil
                                                             :query (query-builder-component/sanitize-q query)}))])))
 
-     (when-not (or (:hide-children? config) table? property?)
+     (when-not (or (:hide-children? config)
+                   table?
+                   property?
+                   (block-renderer-hides-outline-children?
+                    renderer-display-mode
+                    {:matched-block-renderer matched-block-renderer}))
        (let [config' (-> (update config :level inc)
                          (dissoc :original-block :data))]
          (block-children config' block children collapsed?)))

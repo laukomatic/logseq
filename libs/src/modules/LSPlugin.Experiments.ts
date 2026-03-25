@@ -19,11 +19,16 @@ export type BlockPropertiesRendererProps = {
   properties: Record<string, any>
 }
 
+export type BlockRendererChild = Record<string, any> & {
+  children?: Array<BlockRendererChild>
+}
+
 export type BlockRendererProps = BlockPropertiesRendererProps & {
   uuid?: string
   page?: string
   content?: string
   format?: string
+  children?: Array<BlockRendererChild>
 }
 
 export type BlockPropertiesPredicate = (
@@ -215,6 +220,9 @@ export class LSPluginExperiments {
    * @param key Unique key for this renderer (scoped to the plugin).
    * @param opts Renderer options.
    * @param opts.when Optional synchronous predicate; if omitted, always matches.
+   * @param opts.includeChildren When true, passes the block's recursive children
+   * tree to the renderer and hides native outline children while the plugin
+   * renderer is active.
    * @param opts.priority Higher number wins when multiple block renderers match.
    * @param opts.subs Reserved subscription list for future reactive updates.
    * @param opts.render React function component receiving block renderer props.
@@ -223,6 +231,7 @@ export class LSPluginExperiments {
     key: string,
     opts: {
       when?: BlockRendererPredicate
+      includeChildren?: boolean
       priority?: number
       subs?: Array<string>
       render: (props: BlockRendererProps) => any

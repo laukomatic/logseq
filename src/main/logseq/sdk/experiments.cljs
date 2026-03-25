@@ -83,12 +83,15 @@
                    {:pid pid
                     :key key
                     :message "`when` for registerBlockRenderer must be a synchronous predicate function."})
-        (let [clj-opts (extract-js-renderer-opts
+        (let [include-children (aget opts "includeChildren")
+              clj-opts (extract-js-renderer-opts
                         opts
                         [:when :priority :subs :render]
                         nil)]
           (plugin-handler/register-hosted-renderer
-           (keyword pid) key (assoc clj-opts :type "block")))))))
+           (keyword pid) key (cond-> (assoc clj-opts :type "block")
+                               (some? include-children)
+                               (assoc :include-children include-children))))))))
 
 (defn ^:export register_extensions_enhancer
   [pid type enhancer]
