@@ -3453,7 +3453,7 @@
               {:on-error (fn [_error]
                            (reset! *plugin-renderer-error? true))
                :fallback-view outline-view-cp}
-              [:> (:render matched-block-renderer) block-renderer-props-js])
+              (some-> (:render matched-block-renderer) (apply [block-renderer-props-js])))
              (str "block-renderer-" (:key matched-block-renderer) "-" uuid))]
             (when (show-block-renderer-outline-toggle? renderer-display-mode)
              (shui/button
