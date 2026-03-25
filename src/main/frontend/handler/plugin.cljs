@@ -515,10 +515,33 @@
    :daemon-renderers *daemon-renderer-providers true))
 
 (defonce *hosted-renderer-providers (atom #{}))
-(def register-hosted-renderer
-  ;; [pid key payload]
+
+;; Pre-created internal register functions — all share *hosted-renderer-providers
+;; but use separate storage type keywords so keys don't collide across renderer types.
+(def ^:private -register-hosted
   (create-local-renderer-register
    :hosted-renderers *hosted-renderer-providers))
+
+(def ^:private -register-block
+  (create-local-renderer-register
+   :block-renderers *hosted-renderer-providers))
+
+(def ^:private -register-block-properties
+  (create-local-renderer-register
+   :block-properties-renderers *hosted-renderer-providers))
+
+(defn register-hosted-renderer
+  "Unified renderer registration.  Routes by `:type` in opts:
+     \"block\"            → block renderer storage
+     \"block-properties\" → block-properties renderer storage
+     else               → hosted renderer storage (sidebar, etc.)"
+  [pid key opts]
+  (let [register-fn (case (:type opts)
+                      "block"            -register-block
+                      "block-properties" -register-block-properties
+                      -register-hosted)]
+    (register-fn pid key opts)))
+
 (def get-hosted-renderers
   ;; [key]
   (create-local-renderer-getter
@@ -564,45 +587,26 @@
   (or (instance? js/Promise result)
       (some-> result (aget "then") fn?)))
 
-(defn- match-block-properties-predicate
-  [predicate {:keys [props]} {:keys [pid key]}]
+(defn- match-renderer-predicate
+  "Run a synchronous predicate against JS props for any block renderer type.
+   `error-tag` is a keyword prefix used to distinguish log messages,
+   e.g. :block-renderer or :block-properties-renderer."
+  [error-tag predicate {:keys [props]} {:keys [pid key]}]
   (try
     (let [result (predicate props)]
       (cond
         (promise-like? result)
         (do
-          (log/error :block-properties-renderer-predicate-async
+          (log/error (keyword (str (name error-tag) "-predicate-async"))
                      {:pid pid
                       :key key
-                      :message "`when` predicate for block properties renderer must return synchronously."})
+                      :message (str "`when` predicate for " (name error-tag) " must return synchronously.")})
           false)
 
         :else
         (boolean result)))
     (catch :default error
-      (log/error :block-properties-renderer-predicate-exception
-                 {:pid pid
-                  :key key
-                  :error error})
-      false)))
-
-(defn- match-block-renderer-predicate
-  [predicate {:keys [props]} {:keys [pid key]}]
-  (try
-    (let [result (predicate props)]
-      (cond
-        (promise-like? result)
-        (do
-          (log/error :block-renderer-predicate-async
-                     {:pid pid
-                      :key key
-                      :message "`when` predicate for block renderer must return synchronously."})
-          false)
-
-        :else
-        (boolean result)))
-    (catch :default error
-      (log/error :block-renderer-predicate-exception
+      (log/error (keyword (str (name error-tag) "-predicate-exception"))
                  {:pid pid
                   :key key
                   :error error})
@@ -620,7 +624,7 @@
       true
 
       (fn? condition)
-      (match-block-properties-predicate condition match-context' renderer)
+      (match-renderer-predicate :block-properties-renderer condition match-context' renderer)
 
       :else
       (let [op  (some-> condition first key)
@@ -667,19 +671,20 @@
 
     :else v))
 
-(defonce *block-properties-renderer-providers (atom #{}))
+;; Block renderers — registered through the unified hosted-renderer path.
+;; Storage type keywords (:block-renderers, :block-properties-renderers) are
+;; kept separate so keys don't collide with sidebar/hosted renderers.
 
-(defonce *block-renderer-providers (atom #{}))
-
-(def register-block-renderer
-  ;; [pid key payload] payload keys: :when :priority :subs :render
-  (create-local-renderer-register
-   :block-renderers *block-renderer-providers))
+(defn register-block-renderer
+  "Register a block renderer.  Delegates to register-hosted-renderer
+   with :type \"block\"."
+  [pid key opts]
+  (register-hosted-renderer pid key (assoc opts :type "block")))
 
 (def get-block-renderers
   ;; [] - get all
   (create-local-renderer-getter
-   :block-renderers *block-renderer-providers true))
+   :block-renderers *hosted-renderer-providers true))
 
 (defn any-block-renderers?
   []
@@ -694,20 +699,21 @@
            (filter (fn [renderer]
                      (let [predicate (:when renderer)]
                        (if predicate
-                         (match-block-renderer-predicate predicate match-context' renderer)
+                         (match-renderer-predicate :block-renderer predicate match-context' renderer)
                          true))))
            (sort-by #(- (or (:priority %) 0)))
            first))))
 
-(def register-block-properties-renderer
-  ;; [pid key payload]  payload keys: :when :mode :priority :subs :render
-  (create-local-renderer-register
-   :block-properties-renderers *block-properties-renderer-providers))
+(defn register-block-properties-renderer
+  "Register a block-properties renderer.  Delegates to register-hosted-renderer
+   with :type \"block-properties\"."
+  [pid key opts]
+  (register-hosted-renderer pid key (assoc opts :type "block-properties")))
 
 (def get-block-properties-renderers
   ;; [] - get all
   (create-local-renderer-getter
-   :block-properties-renderers *block-properties-renderer-providers true))
+   :block-properties-renderers *hosted-renderer-providers true))
 
 (defn get-matched-block-properties-renderers
   "Return all registered block-properties renderers whose :when condition

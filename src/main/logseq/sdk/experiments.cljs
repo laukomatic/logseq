@@ -40,28 +40,39 @@
      (keyword pid) key (reduce #(assoc %1 %2 (aget opts (name %2))) {}
                                [:before :subs :render]))))
 
+(defn- extract-js-renderer-opts
+  "Extract keys from a JS opts object into a clj map.
+   `transforms` is an optional map of {keyword transform-fn} for per-key processing.
+   Keys whose JS value is nil/undefined are omitted."
+  [^js opts ks transforms]
+  (reduce (fn [r k]
+            (let [v (aget opts (name k))]
+              (if (some? v)
+                (assoc r k (if-let [xf (get transforms k)]
+                             (xf v)
+                             v))
+                r)))
+          {} ks))
+
 (defn ^:export register_hosted_renderer
   [pid key ^js opts]
   (when-let [^js _pl (plugin-handler/get-plugin-inst pid)]
     (plugin-handler/register-hosted-renderer
-     (keyword pid) key (reduce #(assoc %1 %2 (aget opts (name %2))) {}
-                               [:title :type :mode :subs :render]))))
+     (keyword pid) key
+     (extract-js-renderer-opts opts [:title :type :mode :subs :render] nil))))
 
 (defn ^:export register_block_properties_renderer
   [pid key ^js opts]
   (when-let [^js _pl (plugin-handler/get-plugin-inst pid)]
-    (let [clj-opts (reduce (fn [r k]
-                             (let [v (aget opts (name k))]
-                               (if (some? v)
-                                 (assoc r k (if (= :when k)
-                                               (if (fn? v)
-                                                 v
-                                                 (js->clj v :keywordize-keys true))
-                                              v))
-                                 r)))
-                           {} [:when :mode :priority :subs :render])]
-      (plugin-handler/register-block-properties-renderer
-       (keyword pid) key clj-opts))))
+    (let [clj-opts (extract-js-renderer-opts
+                    opts
+                    [:when :mode :priority :subs :render]
+                    {:when (fn [v]
+                             (if (fn? v)
+                               v
+                               (js->clj v :keywordize-keys true)))})]
+      (plugin-handler/register-hosted-renderer
+       (keyword pid) key (assoc clj-opts :type "block-properties")))))
 
 (defn ^:export register_block_renderer
   [pid key ^js opts]
@@ -72,15 +83,12 @@
                    {:pid pid
                     :key key
                     :message "`when` for registerBlockRenderer must be a synchronous predicate function."})
-        (let [clj-opts (reduce (fn [r k]
-                                 (let [v (aget opts (name k))]
-                                   (if (some? v)
-                                     (assoc r k v)
-                                     r)))
-                               {}
-                               [:when :priority :subs :render])]
-          (plugin-handler/register-block-renderer
-           (keyword pid) key clj-opts))))))
+        (let [clj-opts (extract-js-renderer-opts
+                        opts
+                        [:when :priority :subs :render]
+                        nil)]
+          (plugin-handler/register-hosted-renderer
+           (keyword pid) key (assoc clj-opts :type "block")))))))
 
 (defn ^:export register_extensions_enhancer
   [pid type enhancer]
