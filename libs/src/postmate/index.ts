@@ -501,6 +501,11 @@ export class Postmate {
 
         if (attempt === maxHandshakeRequests) {
           clearInterval(responseInterval)
+          this.parent.removeEventListener('message', reply, false)
+          if (process.env.NODE_ENV !== 'production') {
+            log('Parent: Handshake failed after maximum attempts')
+          }
+          reject(new Error('Postmate: Handshake failed'))
         }
       }
 
