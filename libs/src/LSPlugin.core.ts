@@ -528,7 +528,8 @@ class PluginLocal extends EventEmitter<
         return `${this.installedFromUserWebUrl}/${filePath}`
       }
 
-      return `https://pub-80f42b85b62c40219354a834fcf2bbfa.r2.dev/${path.join(localRoot, filePath)}`
+      return `https://pub-80f42b85b62c40219354a834fcf2bbfa.r2.dev/${path.join(
+        localRoot, filePath)}`
     }
 
     const reg = /^(http|file)/
@@ -581,7 +582,8 @@ class PluginLocal extends EventEmitter<
       })
 
     const { repo, version } = this._options
-    const localRoot = (this._localRoot = this.isWebPlugin ? `${repo || url}/${version}` : safetyPathNormalize(url))
+    const localRoot = (this._localRoot = this.isWebPlugin ? `${repo ||
+    url}/${version}` : safetyPathNormalize(url))
     const logseq: Partial<LSPluginPkgConfig> = pkg.logseq || {}
     // const validateEntry = (main) => main && /\.(js|html)$/.test(main)
 
@@ -678,9 +680,9 @@ class PluginLocal extends EventEmitter<
     <meta charset="UTF-8">
     <title>logseq plugin entry</title>
     ${
-        IS_DEV
-          ? `<script src="${sdkPathRoot}/lsplugin.user.js?v=${tag}"></script>`
-          : `<script src="https://cdn.jsdelivr.net/npm/@logseq/libs/dist/lsplugin.user.min.js?v=${tag}"></script>`
+        this.isWebPlugin
+          ? `<script src="https://cdn.jsdelivr.net/npm/@logseq/libs/dist/lsplugin.user.min.js?v=${tag}"></script>`
+          : `<script src="${sdkPathRoot}/lsplugin.user.js?v=${tag}"></script>`
       }
 
   </head>
@@ -1122,7 +1124,9 @@ class PluginLocal extends EventEmitter<
     json.err = this.loadErr
     json.usf = this.dotSettingsFile
     json.iir = this.isInstalledInLocalDotRoot
-    json.webMode = this.isWebPlugin ? (this.installedFromUserWebUrl ? 'user' : 'github') : false
+    json.webMode = this.isWebPlugin ? (this.installedFromUserWebUrl
+      ? 'user'
+      : 'github') : false
     json.lsr = this._resolveResourceFullUrl('/')
 
     if (settings === false) {
@@ -1368,7 +1372,8 @@ class LSPluginCore
         this.emit('registered', pluginLocal)
 
         // external plugins
-        if (!pluginLocal.isWebPlugin && !pluginLocal.isInstalledInLocalDotRoot) {
+        if (!pluginLocal.isWebPlugin &&
+          !pluginLocal.isInstalledInLocalDotRoot) {
           externals.add(url)
         }
       }
