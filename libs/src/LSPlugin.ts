@@ -1134,10 +1134,15 @@ export interface ILSPluginUser extends EventEmitter<LSPluginUserEvents> {
   /**
    * @example https://github.com/logseq/logseq-plugin-samples/tree/master/logseq-awesome-fonts
    *
+   * Patch the current plugin settings with the provided attributes.
+   *
    * @param attrs
    */
   updateSettings(attrs: Record<string, any>): void
 
+  /**
+   * Called with full settings snapshots: `(nextSettings, previousSettings)`.
+   */
   onSettingsChanged<T = any>(cb: (a: T, b: T) => void): IUserOffHook
 
   showSettingsUI(): void
