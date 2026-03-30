@@ -425,7 +425,8 @@ class PluginLocal extends EventEmitter<
   'loaded' | 'unloaded' | 'beforeunload' | 'error' | string
 > {
   private _sdk: Partial<PluginLocalSDKMetadata> = {}
-  private _disposes: Array<() => Promise<any>> = []
+  private _runtimeDisposes: Array<() => Promise<any>> = []
+  private _registrationDisposes: Array<() => Promise<any>> = []
   private _id: PluginLocalIdentity
   private _status: PluginLocalLoadStatus = PluginLocalLoadStatus.UNLOADED
   private _loadErr?: Error
@@ -448,6 +449,11 @@ class PluginLocal extends EventEmitter<
     super()
 
     this._id = _options.key || genID()
+
+    this._disposeRegistration(async () => {
+      this._disposeSettingsObserver?.()
+      this._disposeSettingsObserver = undefined
+    })
 
     initUserSettingsHandlers(this)
     initMainUIHandlers(this)
@@ -482,25 +488,8 @@ class PluginLocal extends EventEmitter<
         settings.settings = userSettings
       }
 
-      const handler = async (a, b) => {
+      const handler = async (a) => {
         debug('Settings changed', this.debugTag, a)
-
-        if (!a.disabled && b.disabled) {
-          // Enable plugin
-          const [, freshSettings] = await loadFreshSettings()
-          freshSettings.disabled = false
-          a = Object.assign(a, freshSettings)
-          settings.settings = a
-          await this.load()
-        }
-
-        if (a.disabled && !b.disabled) {
-          // Disable plugin
-          const [, freshSettings] = await loadFreshSettings()
-          freshSettings.disabled = true
-          a = Object.assign(a, freshSettings)
-          await this.unload()
-        }
 
         if (a) {
           invokeHostExportedApi('save_plugin_user_settings', this.id, a)
@@ -922,7 +911,7 @@ class PluginLocal extends EventEmitter<
     } catch (e) {
       this.logger.error('load', e, true)
 
-      this.dispose().catch(null)
+      this.disposeRuntime().catch(null)
       this._status = PluginLocalLoadStatus.ERROR
       this._loadErr = e
     } finally {
@@ -957,9 +946,7 @@ class PluginLocal extends EventEmitter<
 
     if (unregister) {
       await this.unload()
-
-      this._disposeSettingsObserver?.()
-      this._disposeSettingsObserver = undefined
+      await this.disposeRegistration()
 
       if (this.isWebPlugin || this.isInstalledInLocalDotRoot) {
         this._ctx.emit('unlink-plugin', this.id)
@@ -984,7 +971,7 @@ class PluginLocal extends EventEmitter<
           this.logger.error('beforeunload', e)
         }
 
-        await this.dispose()
+        await this.disposeRuntime()
       }
 
       this.emit('unloaded')
@@ -995,22 +982,38 @@ class PluginLocal extends EventEmitter<
     }
   }
 
-  private async dispose() {
-    for (const fn of this._disposes) {
+  private async _runDisposers(disposers: Array<() => Promise<any>>) {
+    for (const fn of disposers) {
       try {
         fn && (await fn())
       } catch (e) {
         console.error(this.debugTag, 'dispose Error', e)
       }
     }
+  }
+
+  private async disposeRuntime() {
+    await this._runDisposers(this._runtimeDisposes)
 
     // clear
-    this._disposes = []
+    this._runtimeDisposes = []
+  }
+
+  private async disposeRegistration() {
+    await this._runDisposers(this._registrationDisposes)
+
+    // clear
+    this._registrationDisposes = []
   }
 
   _dispose(fn: any) {
     if (!fn) return
-    this._disposes.push(fn)
+    this._runtimeDisposes.push(fn)
+  }
+
+  _disposeRegistration(fn: any) {
+    if (!fn) return
+    this._registrationDisposes.push(fn)
   }
 
   _onHostMounted(callback: () => void) {
@@ -1385,6 +1388,9 @@ class LSPluginCore
         }
 
         pluginLocal.settings?.on('change', onSettingsChange)
+        pluginLocal._disposeRegistration(() => {
+          pluginLocal.settings?.off('change', onSettingsChange)
+        })
 
         this._registeredPlugins.set(pluginLocal.id, pluginLocal)
         this.emit('registered', pluginLocal)
@@ -1466,6 +1472,9 @@ class LSPluginCore
 
     this.emit('beforeenable')
     p.settings?.set('disabled', false)
+
+    await p.load()
+
     this.emit('enabled', p.id)
   }
 
@@ -1475,6 +1484,9 @@ class LSPluginCore
 
     this.emit('beforedisable')
     p.settings?.set('disabled', true)
+
+    await p.unload()
+
     this.emit('disabled', p.id)
   }
 
