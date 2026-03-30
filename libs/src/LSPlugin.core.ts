@@ -370,7 +370,11 @@ function initApiProxyHandlers(pluginLocal: PluginLocal) {
 
     if (pluginLocal.shadow) {
       if (payload.actor) {
-        payload.actor.resolve(ret)
+        if (ret?.hasOwnProperty(LSPMSG_ERROR_TAG)) {
+          payload.actor.reject(ret[LSPMSG_ERROR_TAG])
+        } else {
+          payload.actor.resolve(ret)
+        }
       }
       return
     }
@@ -429,6 +433,7 @@ class PluginLocal extends EventEmitter<
   private _dotSettingsFile?: string
   private _caller?: LSPluginCaller
   private _logger?: PluginLogger = new PluginLogger('PluginLocal')
+  private _disposeSettingsObserver?: () => void
 
   /**
    * @param _options
@@ -454,7 +459,7 @@ class PluginLocal extends EventEmitter<
     const { _options } = this
     const logger = (this._logger = new PluginLogger(`Loader:${this.debugTag}`))
 
-    if (_options.settings && !reload) {
+    if (_options.settings && !reload && this._disposeSettingsObserver) {
       return
     }
 
@@ -470,9 +475,11 @@ class PluginLocal extends EventEmitter<
         settings = _options.settings = new PluginSettings(userSettings)
       }
 
+      this._disposeSettingsObserver?.()
+      this._disposeSettingsObserver = undefined
+
       if (reload) {
         settings.settings = userSettings
-        return
       }
 
       const handler = async (a, b) => {
@@ -503,7 +510,14 @@ class PluginLocal extends EventEmitter<
       // observe settings
       settings.on('change', handler)
 
-      return () => {}
+      const disposeSettingsObserver = () => {
+        settings.off('change', handler)
+        if (this._disposeSettingsObserver === disposeSettingsObserver) {
+          this._disposeSettingsObserver = undefined
+        }
+      }
+
+      this._disposeSettingsObserver = disposeSettingsObserver
     } catch (e) {
       debug('[load plugin user settings Error]', e)
       logger?.error(e)
@@ -871,7 +885,7 @@ class PluginLocal extends EventEmitter<
 
       const installPackageThemes = await this._preparePackageConfigs()
 
-      this._dispose(await this._setupUserSettings(opts?.reload))
+      await this._setupUserSettings(opts?.reload)
 
       if (!this.disabled) {
         await installPackageThemes.call(null)
@@ -943,6 +957,9 @@ class PluginLocal extends EventEmitter<
 
     if (unregister) {
       await this.unload()
+
+      this._disposeSettingsObserver?.()
+      this._disposeSettingsObserver = undefined
 
       if (this.isWebPlugin || this.isInstalledInLocalDotRoot) {
         this._ctx.emit('unlink-plugin', this.id)
@@ -1286,11 +1303,10 @@ class LSPluginCore
     // @ts-expect-error
     window.__debugPluginsPerfInfo = debugPerfInfo
 
+    const readyIndicator = (this._readyIndicator = deferred())
+
     try {
       this._isRegistering = true
-
-      const _userConfigRoot = this._options.dotConfigRoot
-      const readyIndicator = (this._readyIndicator = deferred())
 
       await this.loadUserPreferences()
 
@@ -1363,10 +1379,12 @@ class LSPluginCore
           }
         }
 
-        pluginLocal.settings?.on('change', (a) => {
+        const onSettingsChange = (a) => {
           this.emit('settings-changed', pluginLocal.id, a)
           pluginLocal.caller?.callUserModel(LSPMSG_SETTINGS, { payload: a })
-        })
+        }
+
+        pluginLocal.settings?.on('change', onSettingsChange)
 
         this._registeredPlugins.set(pluginLocal.id, pluginLocal)
         this.emit('registered', pluginLocal)
@@ -1385,6 +1403,10 @@ class LSPluginCore
     } catch (e) {
       console.error(e)
     } finally {
+      if (!readyIndicator.settled) {
+        readyIndicator.resolve('ready')
+      }
+
       this._isRegistering = false
       this.emit('ready', perfTable)
       debugPerfInfo()

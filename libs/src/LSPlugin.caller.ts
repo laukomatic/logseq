@@ -102,7 +102,7 @@ class LSPluginCaller extends EventEmitter {
         await actor.promise
       },
 
-      [LSPMSG_SETTINGS]: async ({ type, payload }) => {
+      [LSPMSG_SETTINGS]: async ({ payload }) => {
         caller.emit('settings:changed', payload)
       },
 
@@ -406,7 +406,7 @@ class LSPluginCaller extends EventEmitter {
   }
 
   _getSandboxShadowContainer() {
-    return this._shadow?.frame.parentNode as HTMLDivElement
+    return this._shadow?.frame as HTMLDivElement
   }
 
   _getSandboxIframeRoot() {
@@ -440,6 +440,14 @@ class LSPluginCaller extends EventEmitter {
       clearInterval(this._syncGCTimer)
       this._syncGCTimer = null
     }
+
+    this._connected = false
+    this._parent = undefined
+    this._child = undefined
+    this._shadow = undefined
+    this._call = undefined
+    this._callUserModel = undefined
+    this._status = undefined
   }
 }
 
