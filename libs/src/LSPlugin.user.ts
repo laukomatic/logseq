@@ -519,9 +519,15 @@ export class LSPluginUser
     })
 
     _caller.on('settings:changed', (payload) => {
-      const b = Object.assign({}, this.settings)
-      const a = Object.assign(this._baseInfo.settings, payload)
-      this.emit('settings:changed', { ...a }, b)
+      const prevSettings = { ...(this.settings || {}) }
+      const nextSettings = { ...(payload || {}) }
+
+      this._baseInfo = {
+        ...this._baseInfo,
+        settings: nextSettings,
+      }
+
+      this.emit('settings:changed', nextSettings, prevSettings)
     })
 
     _caller.on('beforeunload', async (payload) => {
@@ -549,10 +555,14 @@ export class LSPluginUser
       }
 
       let baseInfo = await this._caller.connectToParent(model)
+      const hostSettings = baseInfo?.settings
 
       this._connected = true
 
       baseInfo = deepMerge(this._baseInfo, baseInfo)
+      if (hostSettings !== undefined) {
+        baseInfo.settings = hostSettings
+      }
       this._baseInfo = baseInfo
 
       if (baseInfo?.id) {
