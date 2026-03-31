@@ -141,7 +141,7 @@
            (fn [^js e]
              (case (keyword (aget e "name"))
                :IllegalPluginPackageError
-               (notification/show! "Illegal Logseq plugin package." :error)
+                (plugin-handler/show-illegal-plugin-package-notification! e)
                :ExistedImportedPluginPackageError
                (notification/show! (str "Existed plugin package (" (.-message e) ").") :error)
                :default)
