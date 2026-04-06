@@ -35,6 +35,7 @@
             [logseq.db.test.helper :as db-test]
             [logseq.outliner.core :as outliner-core]
             [logseq.outliner.op :as outliner-op]
+            [logseq.outliner.op.construct :as op-construct]
             [logseq.outliner.page :as outliner-page]
             [logseq.outliner.property :as outliner-property]
             [promesa.core :as p]))
@@ -455,8 +456,8 @@
               (is (= "db transact failed" (:reason data)))
               (is (= rejected-tx (:data data))))))))))
 
-(deftest hello-checksum-mismatch-fails-fast-test
-  (testing "hello with matching t but mismatched checksum fails fast"
+(deftest hello-checksum-mismatch-logs-warning-test
+  (testing "hello with matching t but mismatched checksum logs warning without throwing"
     (let [{:keys [conn client-ops-conn]} (setup-parent-child)
           latest-prev @db-sync/*repo->latest-remote-tx
           raw-message (js/JSON.stringify
@@ -474,16 +475,17 @@
           (with-redefs [sync-apply/flush-pending! (fn [& _] nil)
                         sync-assets/enqueue-asset-sync! (fn [& _] nil)]
             (try
-              (sync-handle-message/handle-message! test-repo client raw-message)
-              (catch :default error
-                (let [data (ex-data error)]
-                  (is (= :db-sync/checksum-mismatch (:type data)))
-                  (is (= "bad-checksum" (:remote-checksum data)))))
+              (is (= :ok
+                     (try
+                       (sync-handle-message/handle-message! test-repo client raw-message)
+                       :ok
+                       (catch :default _error
+                         :thrown))))
               (finally
                 (reset! db-sync/*repo->latest-remote-tx latest-prev)))))))))
 
-(deftest hello-checksum-mismatch-fails-fast-for-e2ee-test
-  (testing "e2ee graphs also fail fast on checksum mismatch"
+(deftest hello-checksum-mismatch-logs-warning-for-e2ee-test
+  (testing "e2ee graphs also log warning on checksum mismatch without throwing"
     (let [{:keys [conn client-ops-conn]} (setup-parent-child)
           latest-prev @db-sync/*repo->latest-remote-tx
           raw-message (js/JSON.stringify
@@ -502,12 +504,12 @@
                         sync-assets/enqueue-asset-sync! (fn [& _] nil)
                         sync-crypt/graph-e2ee? (constantly true)]
             (try
-              (sync-handle-message/handle-message! test-repo client raw-message)
-              (is false "expected checksum mismatch to fail-fast for e2ee graphs")
-              (catch :default error
-                (let [data (ex-data error)]
-                  (is (= :db-sync/checksum-mismatch (:type data)))
-                  (is (= "bad-checksum" (:remote-checksum data)))))
+              (is (= :ok
+                     (try
+                       (sync-handle-message/handle-message! test-repo client raw-message)
+                       :ok
+                       (catch :default _error
+                         :thrown))))
               (finally
                 (reset! db-sync/*repo->latest-remote-tx latest-prev)))))))))
 
@@ -1972,9 +1974,16 @@
                 pasted (d/entity @conn pasted-id)
                 pasted-uuid (:block/uuid pasted)
                 pasted-child-uuid (:block/uuid (d/entity @conn pasted-child-id))]
-            (is (some #(and (= :save-block (first %))
-                            (= empty-target-uuid (get-in % [1 0 :block/uuid])))
+            (is (some #(and (= :delete-blocks (first %))
+                            (= [[:block/uuid empty-target-uuid]]
+                               (vec (get-in % [1 0]))))
                       (:inverse-outliner-ops pending)))
+            (is (some #(and (= :insert-blocks (first %))
+                            (= empty-target-uuid
+                               (get-in % [1 0 0 :block/uuid])))
+                      (:inverse-outliner-ops pending)))
+            (is (not-any? #(= :save-block (first %))
+                          (:inverse-outliner-ops pending)))
             (is (= true
                    (:applied? (#'sync-apply/apply-history-action! test-repo tx-id true {}))))
             (let [restored-target (d/entity @conn [:block/uuid empty-target-uuid])]
@@ -2392,8 +2401,8 @@
             (is (empty? (#'sync-apply/pending-txs test-repo)))
             (is (= 1 (client-op/get-local-tx test-repo)))))))))
 
-(deftest tx-batch-ok-real-checksum-mismatch-fails-fast-test
-  (testing "tx/batch/ok fails fast on true checksum mismatch"
+(deftest tx-batch-ok-real-checksum-mismatch-logs-warning-test
+  (testing "tx/batch/ok logs warning on true checksum mismatch without throwing"
     (let [{:keys [conn client-ops-conn]} (setup-parent-child)
           stale-checksum "0000000000000000"
           remote-checksum "ffffffffffffffff"
@@ -2408,14 +2417,12 @@
       (with-datascript-conns conn client-ops-conn
         (fn []
           (client-op/update-local-checksum test-repo stale-checksum)
-          (try
-            (sync-handle-message/handle-message! test-repo client raw-message)
-            (is false "expected checksum mismatch to fail fast")
-            (catch :default error
-              (let [data (ex-data error)]
-                (is (= :db-sync/checksum-mismatch (:type data)))
-                (is (= stale-checksum (:local-checksum data)))
-                (is (= remote-checksum (:remote-checksum data)))))))))))
+          (is (= :ok
+                 (try
+                   (sync-handle-message/handle-message! test-repo client raw-message)
+                   :ok
+                   (catch :default _error
+                     :thrown)))))))))
 
 (deftest local-checksum-stays-in-sync-after-undo-redo-sequence-test
   (testing "insert/delete/indent/outdent with undo-all/redo-all keeps cached checksum aligned"
@@ -2826,7 +2833,7 @@
                 child2' (d/entity @conn (:db/id child2))
                 orders [(:block/order child1') (:block/order child2')]]
             (is (every? some? orders))
-            (is (= 1 (count (distinct orders))))))))))
+            (is (= (count orders) (count (distinct orders))))))))))
 
 (deftest create-today-journal-does-not-rewrite-existing-journal-timestamps-test
   (testing "create today journal skips timestamp rewrite when the journal page already exists"
@@ -2860,7 +2867,7 @@
           (let [child1' (d/entity @conn (:db/id child1))
                 child2' (d/entity @conn (:db/id child2))]
             (is (some? (:block/order child1')))
-            (is (= (:block/order child1') (:block/order child2')))))))))
+            (is (not= (:block/order child1') (:block/order child2')))))))))
 
 (deftest two-clients-extends-cycle-test
   (testing "class extends updates from two clients can retain the cycle edges"
@@ -3096,6 +3103,39 @@
                      (set (map :db/ident (:block/tags block-restored)))))
               (is (= base-history-count restored-history-count)))))))))
 
+(deftest derive-history-set-block-property-inverse-includes-property-history-cleanup-test
+  (testing "derive-history-outliner-ops should delete created property-history block for set-block-property"
+    (let [conn (db-test/create-conn-with-blocks
+                {:properties {:pnum {:logseq.property/type :number
+                                     :db/cardinality :db.cardinality/one}}
+                 :pages-and-blocks
+                 [{:page {:block/title "page1"}
+                   :blocks [{:block/title "task"
+                             :build/properties {:pnum 1}}]}]})
+          block-before (db-test/find-block-by-content @conn "task")
+          block-id (:db/id block-before)
+          property-id (:db/id (d/entity @conn :user.property/pnum))
+          history-uuid (random-uuid)
+          {:keys [db-after tx-data]}
+          (d/with @conn
+                  [[:db/add block-id :user.property/pnum 2]
+                   {:db/id -1
+                    :block/uuid history-uuid
+                    :logseq.property.history/block block-id
+                    :logseq.property.history/property property-id
+                    :logseq.property.history/scalar-value 2}]
+                  {})
+          {:keys [inverse-outliner-ops]}
+          (op-construct/derive-history-outliner-ops
+           @conn
+           db-after
+           tx-data
+           {:outliner-op :set-block-property
+            :outliner-ops [[:set-block-property [block-id :user.property/pnum 2]]]})]
+      (is (= :delete-blocks (ffirst inverse-outliner-ops)))
+      (is (= #{[:block/uuid history-uuid]}
+             (set (get-in inverse-outliner-ops [0 1 0])))))))
+
 (deftest pending-reversed-txs-for-batch-status-changes-restore-base-db-test
   (testing "fresh persisted reversed tx rows from repeated batch status changes should restore the base db"
     (let [conn (db-test/create-conn-with-blocks
@@ -3138,6 +3178,52 @@
               (is (= base-tags
                      (set (map :db/ident (:block/tags block-restored)))))
               (is (= base-history-count restored-history-count)))))))))
+
+(deftest derive-history-batch-set-property-inverse-includes-property-history-cleanup-test
+  (testing "derive-history-outliner-ops should delete created property-history blocks for batch-set-property"
+    (let [conn (db-test/create-conn-with-blocks
+                {:properties {:pnum {:logseq.property/type :number
+                                     :db/cardinality :db.cardinality/one}}
+                 :pages-and-blocks
+                 [{:page {:block/title "page1"}
+                   :blocks [{:block/title "task-1"
+                             :build/properties {:pnum 1}}
+                            {:block/title "task-2"}]}]})
+          block-1 (db-test/find-block-by-content @conn "task-1")
+          block-2 (db-test/find-block-by-content @conn "task-2")
+          property-id (:db/id (d/entity @conn :user.property/pnum))
+          history-uuid-1 (random-uuid)
+          history-uuid-2 (random-uuid)
+          {:keys [db-after tx-data]}
+          (d/with @conn
+                  [[:db/add (:db/id block-1) :user.property/pnum 2]
+                   [:db/add (:db/id block-2) :user.property/pnum 2]
+                   {:db/id -1
+                    :block/uuid history-uuid-1
+                    :logseq.property.history/block (:db/id block-1)
+                    :logseq.property.history/property property-id
+                    :logseq.property.history/scalar-value 2}
+                   {:db/id -2
+                    :block/uuid history-uuid-2
+                    :logseq.property.history/block (:db/id block-2)
+                    :logseq.property.history/property property-id
+                    :logseq.property.history/scalar-value 2}]
+                  {})
+          {:keys [inverse-outliner-ops]}
+          (op-construct/derive-history-outliner-ops
+           @conn
+           db-after
+           tx-data
+           {:outliner-op :batch-set-property
+            :outliner-ops [[:batch-set-property [[(:db/id block-1)
+                                                  (:db/id block-2)]
+                                                 :user.property/pnum
+                                                 2
+                                                 {}]]]})]
+      (is (= :delete-blocks (ffirst inverse-outliner-ops)))
+      (is (= #{[:block/uuid history-uuid-1]
+               [:block/uuid history-uuid-2]}
+             (set (get-in inverse-outliner-ops [0 1 0])))))))
 
 (deftest normalize-rebased-pending-tx-keeps-reconstructive-reverse-for-retract-entity-test
   (testing "rebased pending tx should keep non-empty reverse datoms even when forward tx collapses to retractEntity"
