@@ -8,11 +8,13 @@
             [frontend.worker.sync.auth :as sync-auth]
             [frontend.worker.sync.client-op :as client-op]
             [frontend.worker.sync.crypt :as sync-crypt]
+            [frontend.worker.sync.log-and-state :as sync-log-state]
             [frontend.worker.sync.presence :as sync-presence]
             [frontend.worker.sync.transport :as sync-transport]
             [lambdaisland.glogi :as log]
             [logseq.db-sync.checksum :as sync-checksum]
-            [promesa.core :as p]))
+            [promesa.core :as p]
+            [frontend.worker-common.util :as worker-util]))
 
 (defn- fail-fast
   [tag data]
@@ -28,10 +30,13 @@
   (sync-presence/sync-counts
    {:get-datascript-conn worker-state/get-datascript-conn
     :get-client-ops-conn worker-state/get-client-ops-conn
+    :get-pending-local-tx-count client-op/get-pending-local-tx-count
     :get-unpushed-asset-ops-count client-op/get-unpushed-asset-ops-count
     :get-local-tx client-op/get-local-tx
+    :get-local-checksum client-op/get-local-checksum
     :get-graph-uuid client-op/get-graph-uuid
-    :latest-remote-tx @sync-apply/*repo->latest-remote-tx}
+    :latest-remote-tx @sync-apply/*repo->latest-remote-tx
+    :latest-remote-checksum @sync-apply/*repo->latest-remote-checksum}
    repo))
 
 (defn- broadcast-rtc-state!
@@ -95,7 +100,11 @@
 (defn- pending-local-tx?
   [repo]
   (when-let [conn (client-ops-conn repo)]
-    (boolean (first (d/datoms @conn :avet :db-sync/created-at)))))
+    (boolean
+     (some (fn [datom]
+             (let [ent (d/entity @conn (:e datom))]
+               (not= false (:db-sync/pending? ent))))
+           (d/datoms @conn :avet :db-sync/created-at)))))
 
 (defn- checksum-compare-ready?
   [repo client local-t remote-t]
@@ -113,22 +122,33 @@
         checksum)
       (fail-fast :db-sync/missing-db {:repo repo :op :checksum}))))
 
+(defn- recompute-and-store-local-sync-checksum
+  [repo]
+  (when-let [conn (worker-state/get-datascript-conn repo)]
+    (let [checksum (sync-checksum/recompute-checksum @conn)]
+      (client-op/update-local-checksum repo checksum)
+      checksum)))
+
 (defn- verify-sync-checksum!
   [repo client local-tx remote-tx remote-checksum context]
-  (when (and (not (sync-crypt/graph-e2ee? repo))
-             (string? remote-checksum)
+  (when (and (string? remote-checksum)
              (checksum-compare-ready? repo client local-tx remote-tx))
     (let [local-checksum (local-sync-checksum repo)]
       (when-not (= local-checksum remote-checksum)
-        (fail-fast :db-sync/checksum-mismatch
-                   (merge context
-                          {:type :db-sync/checksum-mismatch
-                           :repo repo
-                           :message-type (:type context)
-                           :local-tx local-tx
-                           :remote-tx remote-tx
-                           :local-checksum local-checksum
-                           :remote-checksum remote-checksum}))))))
+        (let [recomputed-checksum (recompute-and-store-local-sync-checksum repo)]
+          (when-not (= recomputed-checksum remote-checksum)
+            (let [mismatch-data (merge context
+                                       {:type :db-sync/checksum-mismatch
+                                        :repo repo
+                                        :message-type (:type context)
+                                        :local-tx local-tx
+                                        :remote-tx remote-tx
+                                        :local-checksum (or recomputed-checksum local-checksum)
+                                        :cached-local-checksum local-checksum
+                                        :remote-checksum remote-checksum})]
+              (sync-log-state/rtc-log :rtc.log/checksum-mismatch mismatch-data)
+              (when worker-util/dev?
+                (log/warn :db-sync/checksum-mismatch mismatch-data)))))))))
 
 (defn- handle-tx-reject!
   [repo client message local-tx]
@@ -149,14 +169,16 @@
                                   {:repo repo
                                    :type "tx/reject"
                                    :reason reason
-                                   :field :data}))]
+                                   :field :data}))
+            rejected-data (cond-> {:type :db-sync/tx-rejected
+                                   :repo repo
+                                   :message-type "tx/reject"
+                                   :reason reason}
+                            (contains? message :t) (assoc :t remote-tx)
+                            (some? data) (assoc :data data))]
+        (sync-log-state/rtc-log :rtc.log/tx-rejected rejected-data)
         (fail-fast :db-sync/tx-rejected
-                   (cond-> {:type :db-sync/tx-rejected
-                            :repo repo
-                            :message-type "tx/reject"
-                            :reason reason}
-                     (contains? message :t) (assoc :t remote-tx)
-                     (some? data) (assoc :data data)))))))
+                   rejected-data)))))
 
 (defn- handle-hello!
   [repo client local-tx remote-tx remote-checksum]
@@ -249,6 +271,8 @@
           remote-checksum (:checksum message)]
       (when remote-tx
         (swap! sync-apply/*repo->latest-remote-tx assoc repo remote-tx))
+      (when (contains? message :checksum)
+        (swap! sync-apply/*repo->latest-remote-checksum assoc repo remote-checksum))
       (case (:type message)
         "hello" (handle-hello! repo client local-tx remote-tx remote-checksum)
         "online-users" (handle-online-users! repo client message)

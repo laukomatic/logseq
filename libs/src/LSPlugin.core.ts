@@ -422,9 +422,16 @@ function convertToLSPResource(fullUrl: string, dotPluginRoot: string) {
 }
 
 class IllegalPluginPackageError extends Error {
-  constructor(message: string) {
+  url?: string
+  packageJsonPath?: string
+
+  constructor(
+    message: string,
+    options: Partial<Pick<IllegalPluginPackageError, 'url' | 'packageJsonPath'>> = {}
+  ) {
     super(message)
     this.name = 'IllegalPluginPackageError'
+    Object.assign(this, options)
   }
 }
 
@@ -567,20 +574,35 @@ class PluginLocal extends EventEmitter<
     let pkg: any = webPkg
 
     if (!pkg) {
-      try {
-        if (!url) {
-          throw new Error('Can not resolve package config location')
-        }
+      let packageConfigError: string | undefined
 
+      if (!url) {
+        packageConfigError = 'Can not resolve package config location'
+      } else {
         debug('prepare package root', url)
 
-        pkg = await invokeHostExportedApi('load_plugin_config', url)
+        try {
+          pkg = await invokeHostExportedApi('load_plugin_config', url)
 
-        if (!pkg || ((pkg = JSON.parse(pkg)), !pkg)) {
-          throw new Error(`Parse package config error #${url}/package.json`)
+          if (!pkg) {
+            packageConfigError = `Parse package config error #${url}/package.json`
+          } else {
+            pkg = JSON.parse(pkg)
+
+            if (!pkg) {
+              packageConfigError = `Parse package config error #${url}/package.json`
+            }
+          }
+        } catch (e: any) {
+          packageConfigError = e?.message || String(e)
         }
-      } catch (e) {
-        throw new IllegalPluginPackageError(e.message)
+      }
+
+      if (packageConfigError) {
+        throw new IllegalPluginPackageError(packageConfigError, {
+          url,
+          packageJsonPath: url ? path.join(url, 'package.json') : undefined,
+        })
       }
     }
 
