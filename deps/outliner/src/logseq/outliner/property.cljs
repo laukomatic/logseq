@@ -631,6 +631,7 @@
     with the given property-id or :property-name option. When a property is created
     it is ensured to have a unique :db/ident"
   [conn property-id schema {:keys [property-name properties] :as opts}]
+  (prn :debug ::upsert-property! property-id schema opts)
   (let [db @conn
         db-ident (or property-id
                      (try (db-property/create-user-property-ident-from-name property-name)
