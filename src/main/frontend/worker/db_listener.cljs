@@ -7,7 +7,9 @@
             [frontend.worker.shared-service :as shared-service]
             [frontend.worker.state :as worker-state]
             [frontend.worker.sync :as db-sync]
-            [promesa.core :as p]))
+            [promesa.core :as p]
+            [clojure.data :as data]
+            [logseq.db :as ldb]))
 
 (defmulti listen-db-changes
   (fn [listen-key & _] listen-key))
@@ -59,6 +61,26 @@
   [_ {:keys [repo]} tx-report]
   (db-sync/handle-local-tx! repo tx-report))
 
+(defn- ensure-avet-datoms-matched-with-eavt!
+  [db {:keys [db-before db-after tx-meta tx-data]}]
+  (let [mismatch (->> (data/diff
+                       (->> (d/datoms db :eavt)
+                            (keep (fn [d] (when (= :block/uuid (:a d))
+                                            (:e d))))
+                            set)
+                       (->> (d/datoms db :avet :block/uuid)
+                            (map :e)
+                            set))
+                      first
+                      (map (fn [e]
+                             (d/entity db e))))]
+    (when (seq mismatch)
+      (throw (ex-info "avet != eavt"
+                      {:tx-meta tx-meta
+                       :tx-data (ldb/write-transit-str tx-data)
+                       :db-before (ldb/write-transit-str db-before)
+                       :db-after (ldb/write-transit-str db-after)})))))
+
 (defn listen-db-changes!
   [repo conn & {:keys [handler-keys]}]
   (let [handlers (if (seq handler-keys)
@@ -70,7 +92,8 @@
     (d/unlisten! conn ::listen-db-changes!)
     (d/listen! conn ::listen-db-changes!
                (fn listen-db-changes!-inner
-                 [{:keys [tx-data tx-meta] :as tx-report}]
+                 [{:keys [tx-data tx-meta db-after] :as tx-report}]
+                 (ensure-avet-datoms-matched-with-eavt! db-after tx-report)
                  (when (seq tx-data)
                    (when-not (:batch-final-tx-report? tx-meta)
                      (db-sync/update-local-sync-checksum! repo tx-report))
