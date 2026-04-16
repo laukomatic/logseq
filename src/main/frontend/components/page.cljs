@@ -235,7 +235,8 @@
   [page]
   [:div.ls-page-title-actions
    [:div.flex.flex-row.items-center.gap-2
-    (when-not (:logseq.property/icon (db/entity (:db/id page)))
+    (when (let [icon (:logseq.property/icon (db/entity (:db/id page)))]
+            (or (nil? icon) (= (:type icon) :none)))
       (shui/button
        {:variant :ghost
         :size :sm
