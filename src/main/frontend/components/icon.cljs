@@ -526,10 +526,16 @@
         effective-size (if photo-icon?
                          (or (:size opts) 20)
                          (or (:size opts) 14))
-        opts' (assoc opts :size effective-size)]
+        opts' (assoc opts :size effective-size)
+        ;; Hover preview from color picker — overrides node's color while hovering.
+        preview (state/sub :ui/icon-hover-preview)
+        preview-active? (and preview (= (:db-id preview) (:db/id entity)))
+        effective-color (cond
+                          preview-active? (or (:color preview) "inherit")
+                          :else (or (:color node-icon) "inherit"))]
     (when-not (or (string/blank? node-icon) (and (contains? #{"letter-n" "file"} node-icon) (:not-text-or-page? opts)))
       [:div.icon-cp-container.flex.items-center.justify-center
-       {:style {:color (or (:color node-icon) "inherit")}
+       {:style {:color effective-color}
         :class (str (when photo-icon? "photo-icon")
                     (when-let [c (:class opts)] (str " " c)))}
        (icon node-icon opts')])))
@@ -2990,8 +2996,11 @@
     [:span.absolute.hidden {:ref *el-ref}]))
 
 (rum/defc color-picker
-  [*color on-select!]
+  [*color on-select! & {:keys [on-hover! on-hover-end!]}]
   (let [[color, set-color!] (rum/use-state @*color)
+        [hover, set-hover!] (rum/use-state nil)
+        ;; hover is nil = not hovering, or {:color X} where X may be nil ("no color")
+        effective-color (if hover (:color hover) color)
         *el (rum/use-ref nil)
         content-fn (fn []
                      (let [colors [nil
@@ -3004,25 +3013,49 @@
                                    (colors/variable :pink :10)
                                    (colors/variable :red :10)]]
                        [:div.color-picker-presets
+                        {:on-mouse-leave (fn []
+                                           (set-hover! nil)
+                                           (some-> on-hover-end! (apply [])))}
                         (for [c colors]
                           [:button.color-swatch
                            {:key (or c "none")
                             :class (when (= c color) "is-selected")
+                            :style (when c {"--swatch-color" c})
+                            :on-mouse-enter (fn []
+                                              (set-hover! {:color c})
+                                              (some-> on-hover! (apply [c])))
+                            :on-focus (fn []
+                                        (set-hover! {:color c})
+                                        (some-> on-hover! (apply [c])))
                             :on-click (fn [] (set-color! c)
+                                        (set-hover! nil)
+                                        (some-> on-hover-end! (apply []))
                                         (some-> on-select! (apply [c]))
                                         (shui/popup-hide!))}
                            (if c
                              [:span.swatch-fill {:style {:background-color c}}]
                              [:span.swatch-empty
                               (shui/tabler-icon "slash" {:size 14})])])]))]
+    ;; Display effect — fires for hover and committed color. Updates CSS var only.
     (hooks/use-effect!
      (fn []
        (when-let [^js picker (some-> (rum/deref *el) (.closest ".cp__emoji-icon-picker"))]
-         (let [color (if (string/blank? color) "inherit" color)]
-           (.setProperty (.-style picker) "--ls-color-icon-preset" color)
-           (storage/set :ls-icon-color-preset color)))
+         (let [c (if (string/blank? effective-color) "inherit" effective-color)]
+           (.setProperty (.-style picker) "--ls-color-icon-preset" c))))
+     [effective-color])
+    ;; Commit effect — only fires on actual selection. Persists + propagates to *color.
+    (hooks/use-effect!
+     (fn []
+       (let [c (if (string/blank? color) "inherit" color)]
+         (storage/set :ls-icon-color-preset c))
        (reset! *color color))
      [color])
+    ;; Cleanup — clear external preview when picker unmounts.
+    (hooks/use-effect!
+     (fn []
+       (fn []
+         (some-> on-hover-end! (apply []))))
+     [])
 
     [:button.color-picker-trigger
      {:ref *el
@@ -3238,7 +3271,7 @@
                    (when (contains? #{:avatar :image :text} (:type normalized))
                      (reset! *view (if (= :text (:type normalized)) :text-picker :asset-picker)))
                    (assoc s ::color (atom (storage/get :ls-icon-color-preset)))))}
-  [state {:keys [on-chosen del-btn? icon-value page-title] :as opts}]
+  [state {:keys [on-chosen del-btn? icon-value page-title preview-target-db-id] :as opts}]
   (let [*q (::q state)
         *result (::result state)
         *tab (::tab state)
@@ -3442,7 +3475,15 @@
                                    (on-chosen nil (-> normalized-icon-value
                                                       (assoc :color c)
                                                       (assoc-in [:data :color] c)
-                                                      (assoc-in [:data :backgroundColor] c)) true))))
+                                                      (assoc-in [:data :backgroundColor] c)) true)))
+                        :on-hover! (when preview-target-db-id
+                                     (fn [c]
+                                       (state/set-state! :ui/icon-hover-preview
+                                                         {:db-id preview-target-db-id
+                                                          :color c})))
+                        :on-hover-end! (when preview-target-db-id
+                                         (fn []
+                                           (state/set-state! :ui/icon-hover-preview nil))))
           ;; delete button
           (when del-btn?
             (shui/button {:variant :outline :size :sm :data-action "del"
@@ -3563,8 +3604,25 @@
                 :icon (icons-cp (get-tabler-icons) opts)
                 (all-cp opts))]))]]])))
 
+(rum/defc icon-picker-trigger-icon < rum/reactive
+  "Reactive sub-component so the trigger icon re-renders on hover-preview changes
+  without forcing the parent (which uses React hooks) into a class component."
+  [icon-value preview-target-db-id icon-props]
+  (let [preview (when preview-target-db-id (state/sub :ui/icon-hover-preview))
+        preview-active? (and preview (= (:db-id preview) preview-target-db-id))
+        ;; IMPORTANT: pre-normalize before mutating. The icon fn's normalize-icon
+        ;; early-exits when :data is present, so adding [:data :color] to a non-
+        ;; unified shape (e.g. {:type :icon :id "house"} with no :data :value)
+        ;; bypasses normalization and the render cond fails → icon disappears.
+        effective-icon-value (if (and preview-active? (map? icon-value))
+                               (let [c (or (:color preview) "inherit")]
+                                 (-> (normalize-icon icon-value)
+                                     (assoc-in [:data :color] c)))
+                               icon-value)]
+    (icon effective-icon-value (merge {:color? true} icon-props))))
+
 (rum/defc icon-picker
-  [icon-value {:keys [empty-label disabled? initial-open? del-btn? on-chosen icon-props popup-opts button-opts page-title]}]
+  [icon-value {:keys [empty-label disabled? initial-open? del-btn? on-chosen icon-props popup-opts button-opts page-title preview-target-db-id]}]
   (let [*trigger-ref (rum/use-ref nil)
         normalized-icon-value (normalize-icon icon-value)
         content-fn
@@ -3577,7 +3635,8 @@
                            (when-not (true? keep-popup?) (shui/popup-hide! id)))
               :icon-value normalized-icon-value
               :page-title page-title
-              :del-btn? del-btn?})))]
+              :del-btn? del-btn?
+              :preview-target-db-id preview-target-db-id})))]
     (hooks/use-effect!
      (fn []
        (when initial-open?
@@ -3606,5 +3665,5 @@
        (if has-icon?
          (if (vector? icon-value) ; hiccup
            icon-value
-           (icon icon-value (merge {:color? true} icon-props)))
+           (icon-picker-trigger-icon icon-value preview-target-db-id icon-props))
          (or empty-label "Empty"))))))

@@ -3220,6 +3220,7 @@
                                                                       {:type :none})))
                                                       :del-btn? (boolean icon')
                                                       :page-title (:block/title block)
+                                                      :preview-target-db-id (:db/id block)
                                                       :button-opts (when (:page-title? config)
                                                                      {:size nil
                                                                       :class "!p-0.5 !h-auto !w-auto"})
