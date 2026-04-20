@@ -480,16 +480,3 @@
      (<! (.<request this "user_info" {})))))
 
 (def remoteapi (->RemoteAPI nil))
-
-(comment
-  ;; We probably need this for some new features later
-  (defonce feature-matrix {:file-sync :beta})
-
-  (defn feature-available?
-    [feature]
-    (or config/dev?
-        (when (logged-in?)
-          (case (feature feature-matrix)
-            :beta (alpha-or-beta-user?)
-            :alpha (alpha-user?)
-            false)))))

@@ -33,6 +33,35 @@ wrangler d1 migrations apply logseq-sync-graphs-prod --env prod
 
 For local development, run `wrangler d1 migrations apply DB --local`.
 
+### Migrate Legacy Users (DynamoDB -> D1)
+
+Migrate users from the legacy AWS DynamoDB `user-info` table (from the old
+`backend-lambda` server) into db-sync's D1 `users` table:
+
+```bash
+cd deps/db-sync
+
+# dry-run first
+bb migrate:users --env local --dry-run --max-users 100
+
+# execute against local D1
+bb migrate:users --env local
+
+# execute against staging D1
+bb migrate:users --env staging
+
+# execute against prod D1
+bb migrate:users --env prod
+```
+
+Useful flags:
+
+- `--aws-profile <name>` (default: `prod`)
+- `--aws-region <region>` (default: `us-east-1`)
+- `--aws-table <name>` (default: `user-info`)
+- `--chunk-size <n>` (default: `200`)
+- `--max-users <n>` for smoke tests
+
 ### Production Graph Lookup
 
 Show the graphs available to a production user by `username` or `user id`:

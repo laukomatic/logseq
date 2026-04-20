@@ -9,7 +9,9 @@
  {clj-kondo/clj-kondo {:version "2026.04.15"}}
 
  :tasks
- {lint:large-vars
+ {:requires ([babashka.tasks :refer [shell]])
+
+  lint:large-vars
   logseq.bb-tasks.lint.large-vars/-main
 
   lint:carve
@@ -19,7 +21,11 @@
   logseq.bb-tasks.lint.ns-docstrings/-main
 
   lint:minimize-public-vars
-  logseq.bb-tasks.lint.minimize-public-vars/-main}
+  logseq.bb-tasks.lint.minimize-public-vars/-main
+
+  migrate:users
+  {:doc "Migrate users from legacy DynamoDB user-info table into D1 users table"
+   :task (apply shell "bb" "scripts/migrate_users_dynamodb_to_d1.clj" *command-line-args*)}}
 
  :tasks/config
  {:large-vars
