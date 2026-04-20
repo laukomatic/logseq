@@ -133,6 +133,10 @@ npm run test:node-adapter
 | COGNITO_ISSUER | Cognito issuer URL |
 | COGNITO_CLIENT_ID | Cognito client id |
 | COGNITO_JWKS_URL | Cognito JWKS URL |
+| OPEN_COLLECTIVE_API_KEY | Open Collective GraphQL API key (used to build `https://api.opencollective.com/graphql/v2/<key>`) |
+| OPEN_COLLECTIVE_API_URL | Optional full Open Collective GraphQL endpoint. Overrides `OPEN_COLLECTIVE_API_KEY` |
+| OPEN_COLLECTIVE_COLLECTIVE_SLUG | Collective slug to sync (defaults to `logseq`) |
+| OPEN_COLLECTIVE_WEBHOOK_TOKEN | Shared token expected in `/hooks/open-collective?token=...` |
 
 ## Notes
 - Protocol definitions live in `docs/agent-guide/db-sync/protocol.md`.

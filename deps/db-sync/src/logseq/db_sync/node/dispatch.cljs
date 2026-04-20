@@ -8,6 +8,7 @@
             [logseq.db-sync.worker.handler.index :as index-handler]
             [logseq.db-sync.worker.handler.sync :as sync-handler]
             [logseq.db-sync.worker.http :as http]
+            [logseq.db-sync.worker.open-collective :as open-collective]
             [promesa.core :as p]))
 
 (defn- admin-token-valid?
@@ -28,6 +29,9 @@
       (= path "/health")
       (http/json-response :worker/health {:ok true})
 
+      (= path "/user")
+      (index-handler/handle-fetch index-self request)
+
       (or (= path "/graphs")
           (string/starts-with? path "/graphs/"))
       (index-handler/handle-fetch index-self request)
@@ -46,6 +50,13 @@
                 (assets-handler/handle request env)
                 access-resp)))
           (http/bad-request "invalid asset path")))
+
+      (= path "/hooks/open-collective")
+      (if (contains? #{"POST" "OPTIONS"} method)
+        (if (= method "OPTIONS")
+          (common/options-response)
+          (open-collective/handle-webhook request env))
+        (http/error-response "method not allowed" 405))
 
       (= method "OPTIONS")
       (common/options-response)

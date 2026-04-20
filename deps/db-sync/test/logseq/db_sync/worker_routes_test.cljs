@@ -2,6 +2,11 @@
   (:require [cljs.test :refer [deftest is testing]]
             [logseq.db-sync.worker.routes.index :as routes]))
 
+(deftest match-route-user-test
+  (testing "user route"
+    (let [match (routes/match-route "POST" "/user")]
+      (is (= :user/get (:handler match))))))
+
 (deftest match-route-graphs-test
   (testing "graphs routes"
     (let [match (routes/match-route "GET" "/graphs")]

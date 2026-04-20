@@ -9,6 +9,7 @@
             [logseq.db-sync.worker.dispatch :as dispatch]
             [logseq.db-sync.worker.handler.sync :as sync-handler]
             [logseq.db-sync.worker.handler.ws :as ws-handler]
+            [logseq.db-sync.worker.open-collective :as open-collective]
             [logseq.db-sync.worker.presence :as presence]
             [logseq.db-sync.worker.ws :as ws]
             [promesa.core :as p]
@@ -19,7 +20,9 @@
 (def worker
   (sentry/wrap-handler
    #js {:fetch (fn [request env _ctx]
-                 (dispatch/handle-worker-fetch request env))}))
+                 (dispatch/handle-worker-fetch request env))
+        :scheduled (fn [_event env _ctx]
+                     (open-collective/handle-scheduled env))}))
 
 (defclass SyncDO
   (extends DurableObject)

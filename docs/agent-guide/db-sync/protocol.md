@@ -54,6 +54,11 @@
 - `GET /health`
   - Worker health check. Response: `{"ok":true}`.
 
+### User
+- `POST /user`
+  - Return current user sync entitlement/profile fields from D1.
+  - Response: `{"ExpireTime": <epoch-seconds>, "UserGroups": ["..."], "ProUser": <boolean>, "StorageLimit": <bytes>, "GraphCountLimit": <int>}`.
+
 ### Graphs (index DO)
 - `GET /graphs`
   - List graphs the user owns. Response: `{"graphs":[{graph-id, graph-name, schema-version?, graph-ready-for-use?, created-at, updated-at}...]}`.
@@ -109,6 +114,11 @@
   - Error response (400): `{"error":"missing body"|"missing graph id"}`.
 - `DELETE /sync/:graph-id/admin/reset`
   - Drop/recreate per-graph tables. Response: `{"ok":true}`.
+
+### Open Collective webhook
+- `POST /hooks/open-collective?token=<token>`
+  - Trigger immediate Open Collective reconciliation for member events.
+  - Returns: `{"ok":true}`.
 
 ### Assets
 - `GET /assets/:graph-id/:asset-uuid.:ext`

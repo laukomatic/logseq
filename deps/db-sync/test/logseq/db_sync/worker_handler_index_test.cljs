@@ -7,6 +7,36 @@
             [logseq.db-sync.worker.handler.index :as index-handler]
             [promesa.core :as p]))
 
+(deftest user-get-returns-expected-shape-test
+  (async done
+         (let [request (js/Request. "http://localhost/user" #js {:method "POST"})
+               url (js/URL. (.-url request))]
+           (-> (p/with-redefs [index/<user-sync-info (fn [_db _user-id]
+                                                       (p/resolved {:expire-time (+ (js/Math.floor (/ (.now js/Date) 1000)) 3600)
+                                                                    :user-groups ["team"]
+                                                                    :is-pro true
+                                                                    :graphs-count 0
+                                                                    :storage-count 0}))]
+                 (p/let [resp (index-handler/handle {:db :db
+                                                     :env #js {}
+                                                     :request request
+                                                     :url url
+                                                     :claims #js {"sub" "user-1"}
+                                                     :route {:handler :user/get
+                                                             :path-params {}}})
+                         text (.text resp)
+                         body (js->clj (js/JSON.parse text) :keywordize-keys true)]
+                   (is (= 200 (.-status resp)))
+                   (is (= ["team"] (:UserGroups body)))
+                   (is (= true (:ProUser body)))
+                   (is (= (* 10 1024 1024 1024) (:StorageLimit body)))
+                   (is (= 10 (:GraphCountLimit body)))))
+               (p/then (fn []
+                         (done)))
+               (p/catch (fn [error]
+                          (is false (str error))
+                          (done)))))))
+
 (deftest graph-access-response-with-timing-caches-result-test
   (async done
          (let [request (js/Request. "http://localhost/sync/graph-1"

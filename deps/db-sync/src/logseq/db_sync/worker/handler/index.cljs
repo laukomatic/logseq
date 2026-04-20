@@ -44,6 +44,14 @@
       (delete-graph-fn graph-id)
       (<delete-graph-do! env url graph-id))))
 
+(def ^:private pro-storage-limit (* 10 1024 1024 1024))
+(def ^:private free-storage-limit 0)
+(def ^:private pro-graph-count-limit 10)
+(def ^:private free-graph-count-limit 1)
+
+(defn- now-epoch-s []
+  (js/Math.floor (/ (.now js/Date) 1000)))
+
 (defn- <delete-graph! [db ^js env ^js url graph-id]
   (p/do!
    (index/<graph-delete-metadata! db graph-id)
@@ -56,6 +64,22 @@
         member-id (:member-id path-params)
         user-id (some-> claims (aget "sub"))]
     (case (:handler route)
+      :user/get
+      (if (string? user-id)
+        (p/let [{:keys [expire-time user-groups is-pro]} (index/<user-sync-info db user-id)
+                expire-time (if (number? expire-time) expire-time 0)
+                pro-user? (and (true? is-pro)
+                               (> expire-time (now-epoch-s)))
+                storage-limit (if pro-user? pro-storage-limit free-storage-limit)
+                graph-count-limit (if pro-user? pro-graph-count-limit free-graph-count-limit)]
+          (http/json-response :user/get
+                              {:ExpireTime expire-time
+                               :UserGroups (or user-groups [])
+                               :ProUser pro-user?
+                               :StorageLimit storage-limit
+                               :GraphCountLimit graph-count-limit}))
+        (http/unauthorized))
+
       :graphs/list
       (if (string? user-id)
         (p/let [graphs (index/<index-list db user-id)

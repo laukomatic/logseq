@@ -165,6 +165,14 @@
 
 (def graph-access-response-schema http-ok-response-schema)
 
+(def user-info-response-schema
+  [:map
+   [:ExpireTime :int]
+   [:UserGroups [:sequential :string]]
+   [:ProUser :boolean]
+   [:StorageLimit :int]
+   [:GraphCountLimit :int]])
+
 (def graph-delete-response-schema
   [:map
    [:graph-id :string]
@@ -252,7 +260,8 @@
    :e2ee/grant-access e2ee-grant-access-request-schema})
 
 (def http-response-schemas
-  {:graphs/list graphs-list-response-schema
+  {:user/get user-info-response-schema
+   :graphs/list graphs-list-response-schema
    :graphs/create graph-create-response-schema
    :graphs/access graph-access-response-schema
    :graphs/delete graph-delete-response-schema

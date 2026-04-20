@@ -5,6 +5,8 @@
   [["/admin"
     ["/graphs/:graph-id" {:methods {"DELETE" :admin-graphs/delete}}]]
 
+   ["/user" {:methods {"POST" :user/get}}]
+
    ["/graphs"
     ["" {:methods {"GET" :graphs/list
                    "POST" :graphs/create}}]

@@ -4,6 +4,7 @@
             [logseq.db-sync.worker.handler.assets :as assets-handler]
             [logseq.db-sync.worker.handler.index :as index-handler]
             [logseq.db-sync.worker.http :as http]
+            [logseq.db-sync.worker.open-collective :as open-collective]
             [promesa.core :as p]))
 
 (defn- ok-json-response []
@@ -34,6 +35,21 @@
                    (is (= 200 (.-status resp)))
                    (is (= true (:ok body)))
                    (is (= 0 @access-check-calls))))
+               (p/then (fn [] (done)))
+               (p/catch (fn [error]
+                          (is false (str error))
+                          (done)))))))
+
+(deftest open-collective-webhook-route-test
+  (async done
+         (let [request (js/Request. "http://localhost/hooks/open-collective?token=t" #js {:method "POST"})]
+           (-> (p/with-redefs [open-collective/handle-webhook (fn [_request _env]
+                                                                (ok-json-response))]
+                 (p/let [resp (dispatch/handle-worker-fetch request #js {})
+                         text (.text resp)
+                         body (js->clj (js/JSON.parse text) :keywordize-keys true)]
+                   (is (= 200 (.-status resp)))
+                   (is (= true (:ok body)))))
                (p/then (fn [] (done)))
                (p/catch (fn [error]
                           (is false (str error))
