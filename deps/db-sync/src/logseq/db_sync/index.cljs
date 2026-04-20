@@ -52,10 +52,66 @@
   [v]
   (if (false? v) 0 1))
 
+(defn- user-is-pro-sql->bool
+  [v]
+  (cond
+    (nil? v) false
+    (or (= 1 v) (= "1" v)) true
+    (or (= 0 v) (= "0" v)) false
+    :else (true? v)))
+
+(defn- user-is-pro-bool->sql
+  [v]
+  (if (true? v) 1 0))
+
+(defn- parse-user-groups
+  [value]
+  (let [parsed (cond
+                 (nil? value) nil
+                 (string? value) (try (js->clj (js/JSON.parse value))
+                                      (catch :default _ nil))
+                 (array? value) (vec value)
+                 (sequential? value) value
+                 :else nil)]
+    (->> parsed
+         (keep (fn [item]
+                 (when (string? item)
+                   item)))
+         vec)))
+
+(defn- user-groups->sql-json
+  [groups]
+  (js/JSON.stringify (clj->js (parse-user-groups groups))))
+
+(defn- parse-int-default
+  [value default]
+  (cond
+    (number? value) value
+    (string? value) (let [n (js/parseInt value 10)]
+                      (if (js/isNaN n) default n))
+    :else default))
+
+(defn- clamp-non-negative-int
+  [value]
+  (let [n (parse-int-default value 0)]
+    (if (neg? n) 0 n)))
+
 (def ^:private graph-e2ee-migration-sql
   "alter table graphs add column graph_e2ee INTEGER DEFAULT 1")
 (def ^:private graph-ready-for-use-migration-sql
   "alter table graphs add column graph_ready_for_use integer default 1")
+(def ^:private user-expire-time-migration-sql
+  "alter table users add column expire_time integer")
+(def ^:private user-user-groups-migration-sql
+  "alter table users add column user_groups text default '[]'")
+(def ^:private user-is-pro-migration-sql
+  "alter table users add column is_pro integer not null default 0")
+(def ^:private user-graphs-count-migration-sql
+  "alter table users add column graphs_count integer not null default 0")
+(def ^:private user-storage-count-migration-sql
+  "alter table users add column storage_count integer not null default 0")
+(def ^:private user-updated-at-migration-sql
+  "alter table users add column updated_at integer")
 
 (defn- duplicate-column-error?
   [error column-name]
@@ -96,6 +152,40 @@
         (p/catch (fn [_]
                    (<run-migration!))))))
 
+(defn- <ensure-user-column!
+  [db column-name migration-sql]
+  (letfn [(<run-migration! []
+            (-> (common/<d1-run db migration-sql)
+                (p/catch (fn [error]
+                           (if (duplicate-column-error? error column-name)
+                             nil
+                             (p/rejected error))))))]
+    (-> (p/let [result (common/<d1-all db
+                                       (str "select name from pragma_table_info('users') where name = '" column-name "'"))
+                rows (common/get-sql-rows result)]
+          (when (empty? rows)
+            (<run-migration!)))
+        (p/catch (fn [_]
+                   (<run-migration!))))))
+
+(defn- <ensure-user-expire-time-column! [db]
+  (<ensure-user-column! db "expire_time" user-expire-time-migration-sql))
+
+(defn- <ensure-user-user-groups-column! [db]
+  (<ensure-user-column! db "user_groups" user-user-groups-migration-sql))
+
+(defn- <ensure-user-is-pro-column! [db]
+  (<ensure-user-column! db "is_pro" user-is-pro-migration-sql))
+
+(defn- <ensure-user-graphs-count-column! [db]
+  (<ensure-user-column! db "graphs_count" user-graphs-count-migration-sql))
+
+(defn- <ensure-user-storage-count-column! [db]
+  (<ensure-user-column! db "storage_count" user-storage-count-migration-sql))
+
+(defn- <ensure-user-updated-at-column! [db]
+  (<ensure-user-column! db "updated_at" user-updated-at-migration-sql))
+
 (defn <index-init! [db]
   (p/do!
    (common/<d1-run db
@@ -116,8 +206,20 @@
                         "id TEXT primary key,"
                         "email TEXT,"
                         "email_verified INTEGER,"
-                        "username TEXT"
+                        "username TEXT,"
+                        "expire_time INTEGER,"
+                        "user_groups TEXT DEFAULT '[]',"
+                        "is_pro INTEGER NOT NULL DEFAULT 0,"
+                        "graphs_count INTEGER NOT NULL DEFAULT 0,"
+                        "storage_count INTEGER NOT NULL DEFAULT 0,"
+                        "updated_at INTEGER"
                         ");"))
+   (<ensure-user-expire-time-column! db)
+   (<ensure-user-user-groups-column! db)
+   (<ensure-user-is-pro-column! db)
+   (<ensure-user-graphs-count-column! db)
+   (<ensure-user-storage-count-column! db)
+   (<ensure-user-updated-at-column! db)
    (common/<d1-run db
                    (str "create table if not exists user_rsa_keys ("
                         "user_id TEXT primary key,"
@@ -283,6 +385,57 @@
             row (first rows)]
       (when row
         (aget row "id")))))
+
+(defn <user-sync-info
+  [db user-id]
+  (when (string? user-id)
+    (p/let [result (common/<d1-all db {:session "first-primary"}
+                                   "select expire_time, user_groups, is_pro, graphs_count, storage_count, updated_at from users where id = ?"
+                                   user-id)
+            rows (common/get-sql-rows result)
+            row (first rows)]
+      {:expire-time (parse-int-default (some-> row (aget "expire_time")) 0)
+       :user-groups (parse-user-groups (some-> row (aget "user_groups")))
+       :is-pro (user-is-pro-sql->bool (some-> row (aget "is_pro")))
+       :graphs-count (clamp-non-negative-int (some-> row (aget "graphs_count")))
+       :storage-count (clamp-non-negative-int (some-> row (aget "storage_count")))
+       :updated-at (parse-int-default (some-> row (aget "updated_at")) 0)})))
+
+(defn <users-with-email
+  [db]
+  (p/let [result (common/<d1-all db {:session "first-primary"}
+                                 "select id, email, user_groups, is_pro, expire_time, graphs_count, storage_count from users where email is not null and email != ''")
+          rows (common/get-sql-rows result)]
+    (mapv (fn [row]
+            {:user-id (aget row "id")
+             :email (some-> (aget row "email") string/lower-case)
+             :user-groups (parse-user-groups (aget row "user_groups"))
+             :is-pro (user-is-pro-sql->bool (aget row "is_pro"))
+             :expire-time (parse-int-default (aget row "expire_time") 0)
+             :graphs-count (clamp-non-negative-int (aget row "graphs_count"))
+             :storage-count (clamp-non-negative-int (aget row "storage_count"))})
+          rows)))
+
+(defn <user-sync-update!
+  [db user-id {:keys [expire-time user-groups is-pro graphs-count storage-count updated-at]}]
+  (when (string? user-id)
+    (common/<d1-run db
+                    (str "update users set expire_time = ?, user_groups = ?, is_pro = ?, graphs_count = ?, storage_count = ?, updated_at = ? "
+                         "where id = ?")
+                    (parse-int-default expire-time 0)
+                    (user-groups->sql-json user-groups)
+                    (user-is-pro-bool->sql is-pro)
+                    (clamp-non-negative-int graphs-count)
+                    (clamp-non-negative-int storage-count)
+                    (parse-int-default updated-at (common/now-ms))
+                    user-id)))
+
+(defn <user-sync-update-by-email!
+  [db email fields]
+  (when (string? email)
+    (p/let [user-id (<user-id-by-email db (string/lower-case email))]
+      (when (string? user-id)
+        (<user-sync-update! db user-id fields)))))
 
 (defn <user-rsa-key-pair-upsert!
   [db user-id public-key encrypted-private-key]

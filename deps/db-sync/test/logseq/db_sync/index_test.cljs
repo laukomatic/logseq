@@ -15,6 +15,18 @@
   "create index if not exists idx_graphs_user_id_updated_at on graphs (user_id, updated_at desc)")
 (def ^:private users-email-index-sql
   "create index if not exists idx_users_email on users (email)")
+(def ^:private users-expire-time-migration-sql
+  "alter table users add column expire_time integer")
+(def ^:private users-user-groups-migration-sql
+  "alter table users add column user_groups text default '[]'")
+(def ^:private users-is-pro-migration-sql
+  "alter table users add column is_pro integer not null default 0")
+(def ^:private users-graphs-count-migration-sql
+  "alter table users add column graphs_count integer not null default 0")
+(def ^:private users-storage-count-migration-sql
+  "alter table users add column storage_count integer not null default 0")
+(def ^:private users-updated-at-migration-sql
+  "alter table users add column updated_at integer")
 
 (deftest index-list-includes-graph-e2ee-flag-test
   (async done
@@ -165,6 +177,29 @@
                                    @sql-calls))
                          (is (some #(string/includes? % users-email-index-sql)
                                    @sql-calls))
+                         (done)))
+               (p/catch (fn [error]
+                          (is false (str error))
+                          (done)))))))
+
+(deftest index-init-runs-user-sync-column-migrations-test
+  (async done
+         (let [sql-calls (atom [])]
+           (-> (p/with-redefs [common/<d1-all (fn [& _]
+                                                (p/resolved #js {:results #js []}))
+                               common/get-sql-rows (fn [result]
+                                                     (aget result "results"))
+                               common/<d1-run (fn [_db sql & _args]
+                                                (swap! sql-calls conj (string/lower-case sql))
+                                                (p/resolved {:ok true}))]
+                 (index/<index-init! :db))
+               (p/then (fn [_]
+                         (is (some #(string/includes? % users-expire-time-migration-sql) @sql-calls))
+                         (is (some #(string/includes? % users-user-groups-migration-sql) @sql-calls))
+                         (is (some #(string/includes? % users-is-pro-migration-sql) @sql-calls))
+                         (is (some #(string/includes? % users-graphs-count-migration-sql) @sql-calls))
+                         (is (some #(string/includes? % users-storage-count-migration-sql) @sql-calls))
+                         (is (some #(string/includes? % users-updated-at-migration-sql) @sql-calls))
                          (done)))
                (p/catch (fn [error]
                           (is false (str error))
