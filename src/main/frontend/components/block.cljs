@@ -81,6 +81,7 @@
             [logseq.graph-parser.mldoc :as gp-mldoc]
             [logseq.graph-parser.text :as text]
             [logseq.outliner.property :as outliner-property]
+            [logseq.sdk.utils :as sdk-util]
             [logseq.shui.dialog.core :as shui-dialog]
             [logseq.shui.hooks :as hooks]
             [logseq.shui.ui :as shui]
@@ -3251,6 +3252,121 @@
       [block* result]
       [nil result])))
 
+(defn- build-block-renderer-children-props
+  [block]
+  (when-let [block-uuid (:block/uuid block)]
+    (let [repo (state/get-current-repo)
+          blocks (some->> (db/get-block-and-children repo block-uuid)
+                   (map (fn [child-block]
+                          (dissoc (db/pull (:db/id child-block)) :block.temp/load-status))))]
+      (or (some-> blocks
+            (tree/blocks->vec-tree block-uuid)
+            first
+            :block/children
+            sdk-util/normalize-keyword-for-json)
+        []))))
+
+(defn- build-block-renderer-match-context
+  ([block]
+   (build-block-renderer-match-context block false))
+  ([block include-children?]
+   (let [uuid-str (some-> (:block/uuid block) str)
+         page-title (or (some-> (:block/page block) :block/title)
+                      (when (ldb/page? block) (:block/title block)))
+         properties-map (if-let [db-id (:db/id block)]
+                          (->> (outliner-property/get-block-full-properties (db/get-db) db-id)
+                            (map :db/ident)
+                            (remove #(= % :logseq.property.class/properties))
+                            (map (fn [property-id] [property-id (get block property-id)]))
+                            (into {}))
+                          (->> (:block/properties block)
+                            (remove (fn [[property-id _]] (= property-id :logseq.property.class/properties)))
+                            (into {})))
+         children (when include-children?
+                    (build-block-renderer-children-props block))
+         props (cond-> {:blockId uuid-str
+                        :properties (into {} (map (fn [[k v]]
+                                                    [(subs (str k) 1)
+                                                     (plugin-handler/serialize-property-value-for-plugin v)])
+                                               properties-map))}
+                 uuid-str (assoc :uuid uuid-str)
+                 page-title (assoc :page page-title)
+                 (:block/title block) (assoc :content (:block/title block))
+                 (get block :block/format :markdown) (assoc :format (name (get block :block/format :markdown)))
+                 include-children? (assoc :children children))]
+     {:block-id uuid-str
+      :uuid uuid-str
+      :page page-title
+      :content (:block/title block)
+      :format (some-> (get block :block/format :markdown) name)
+      :properties-map properties-map
+      :props (clj->js props)})))
+
+(defn- block-renderer-supported-view?
+  [{:keys [sidebar?]} property? table?]
+  (and (not sidebar?)
+    (not property?)
+    (not table?)))
+
+(defn- block-renderer-display-mode
+  [{:keys [matched-block-renderer use-plugin-renderer? editing? plugin-renderer-error?]}]
+  (if (and matched-block-renderer use-plugin-renderer? (not editing?) (not plugin-renderer-error?))
+    :plugin
+    :outline))
+
+(defn- show-block-renderer-plugin-toggle?
+  [display-mode {:keys [matched-block-renderer editing?]}]
+  (boolean (and matched-block-renderer (not editing?) (= :outline display-mode))))
+
+(defn- show-block-renderer-outline-toggle?
+  [display-mode]
+  (= :plugin display-mode))
+
+(defn- block-renderer-hides-outline-children?
+  [display-mode {:keys [matched-block-renderer]}]
+  (boolean (and (= :plugin display-mode)
+             (true? (:include-children matched-block-renderer)))))
+
+(defn- block-renderer-outline-view
+  [config block uuid title table? property? edit-input-id editing? refs-count *hide-block-refs? *show-query? page-icon block-id collapsed?]
+  [:div.flex.flex-col.w-full
+   [:div.block-main-content.flex.flex-row.gap-2
+    (when page-icon
+      page-icon)
+
+    [:div.flex.flex-col.w-full
+     (let [parsed-block (merge block (block/parse-title-and-body uuid (get block :block/format :markdown) title))
+           hide-block-refs-count? (or (and (:embed? config)
+                                        (= (:block/uuid parsed-block) (:embed-id config)))
+                                    table?)]
+       (block-content-or-editor config
+         parsed-block
+         {:edit-input-id edit-input-id
+          :block-id block-id
+          :edit? editing?
+          :refs-count refs-count
+          :*hide-block-refs? *hide-block-refs?
+          :hide-block-refs-count? hide-block-refs-count?
+          :*show-query? *show-query?}))]]
+
+   (when (and (not collapsed?) (not (or table? property?)))
+     (block-positioned-properties config block :block-below))
+
+   (when-not (or (:table? config) (:property? config))
+     (block-reactions block))])
+
+(rum/defcs block-renderer-error-boundary
+  < {:init (fn [state]
+             (assoc state ::on-error (some-> state :rum/args first :on-error)))
+     :did-catch (fn [state error _info]
+                  (when-let [on-error (::on-error state)]
+                    (on-error error))
+                  (assoc state ::error error))}
+  [{error ::error} {:keys [fallback-view]} view]
+  (if (some? error)
+    fallback-view
+    view))
+
 (rum/defcs ^:large-vars/cleanup-todo block-container-inner-aux < rum/reactive db-mixins/query
   {:init (fn [state]
            (let [*ref (atom nil)
@@ -3269,7 +3385,9 @@
                     ::ref *ref
                     ::hide-block-refs? (atom default-hide?)
                     ::show-query? (atom false)
-                    ::refs-count *refs-count)))}
+                    ::refs-count *refs-count
+                    ::plugin-renderer-error? (atom false)
+                    ::use-plugin-renderer? (atom true))))}
   (mixins/event-mixin
    (fn [state]
      (let [*ref (::ref state)]
@@ -3281,6 +3399,10 @@
         *hide-block-refs? (get state ::hide-block-refs?)
         *show-query? (get state ::show-query?)
         show-query? (rum/react *show-query?)
+        *plugin-renderer-error? (get state ::plugin-renderer-error?)
+        plugin-renderer-error? (rum/react *plugin-renderer-error?)
+        *use-plugin-renderer? (get state ::use-plugin-renderer?)
+        use-plugin-renderer? (rum/react *use-plugin-renderer?)
         *refs-count (get state ::refs-count)
         hide-block-refs? (rum/react *hide-block-refs?)
         refs-count (rum/react *refs-count)
@@ -3303,9 +3425,9 @@
         db-collapsed? (util/collapsed? block)
         collapsed? (cond
                      (or ref-or-custom-query?
-                         (:view? config)
-                         (root-block? config block)
-                         (and (or (ldb/class? block) (ldb/property? block)) (:page-title? config)))
+                       (:view? config)
+                       (root-block? config block)
+                       (and (or (ldb/class? block) (ldb/property? block)) (:page-title? config)))
                      (state/sub-block-collapsed uuid container-id)
 
                      :else
@@ -3327,33 +3449,73 @@
         page-icon (when (:page-title? config)
                     (let [icon' (get block :logseq.property/icon)]
                       (when-let [icon (and (ldb/page? block)
-                                           (or icon'
-                                               (some :logseq.property/icon (:block/tags block))
-                                               (when (ldb/class? block)
-                                                 {:type :tabler-icon
-                                                  :id "hash"})
-                                               (when (ldb/property? block)
-                                                 {:type :tabler-icon
-                                                  :id "letter-p"})))]
+                                        (or icon'
+                                          (some :logseq.property/icon (:block/tags block))
+                                          (when (ldb/class? block)
+                                            {:type :tabler-icon
+                                             :id "hash"})
+                                          (when (ldb/property? block)
+                                            {:type :tabler-icon
+                                             :id "letter-p"})))]
                         [:div.ls-page-icon.flex.self-start
                          (icon-component/icon-picker icon
-                                                     {:on-chosen (fn [_e icon]
-                                                                   (if icon
-                                                                     (db-property-handler/set-block-property!
-                                                                      (:db/id block)
-                                                                      :logseq.property/icon
-                                                                      (select-keys icon [:id :type :color]))
-                                                                     ;; del
-                                                                     (db-property-handler/remove-block-property!
-                                                                      (:db/id block)
-                                                                      :logseq.property/icon)))
-                                                      :del-btn? (boolean icon')
-                                                      :icon-props {:style {:width "1lh"
-                                                                           :height "1lh"
-                                                                           :font-size (cond
-                                                                                        (and (util/mobile?) (:page-title? config)) 24
-                                                                                        (:page-title? config) 38
-                                                                                        :else 18)}}})])))]
+                           {:on-chosen (fn [_e icon]
+                                         (if icon
+                                           (db-property-handler/set-block-property!
+                                             (:db/id block)
+                                             :logseq.property/icon
+                                             (select-keys icon [:id :type :color]))
+                                           ;; del
+                                           (db-property-handler/remove-block-property!
+                                             (:db/id block)
+                                             :logseq.property/icon)))
+                            :del-btn? (boolean icon')
+                            :icon-props {:style {:width "1lh"
+                                                 :height "1lh"
+                                                 :font-size (cond
+                                                              (and (util/mobile?) (:page-title? config)) 24
+                                                              (:page-title? config) 38
+                                                              :else 18)}}})])))
+        ;; --- block renderer (full-block plugin replacement) ---
+        block-renderer-base-match-context
+        (when (and config/lsp-enabled?
+                (plugin-handler/any-block-renderers?)
+                (block-renderer-supported-view? config property? table?))
+          (build-block-renderer-match-context block false))
+        matched-block-renderer
+        (when (and (:props block-renderer-base-match-context) (not editing?))
+          (plugin-handler/get-matched-block-renderer block-renderer-base-match-context))
+        block-renderer-match-context
+        (if (true? (:include-children matched-block-renderer))
+          (build-block-renderer-match-context block true)
+          block-renderer-base-match-context)
+        block-renderer-props-js (:props block-renderer-match-context)
+        renderer-display-mode
+        (block-renderer-display-mode {:matched-block-renderer matched-block-renderer
+                                      :use-plugin-renderer? use-plugin-renderer?
+                                      :editing? editing?
+                                      :plugin-renderer-error? plugin-renderer-error?})
+        outline-view-cp
+        [:div.flex.flex-col.w-full
+         (block-renderer-outline-view config block uuid title table? property? edit-input-id editing? refs-count *hide-block-refs? *show-query? page-icon block-id collapsed?)
+         (when (show-block-renderer-plugin-toggle?
+                 renderer-display-mode
+                 {:matched-block-renderer matched-block-renderer
+                  :editing? editing?})
+           (shui/button
+             {:variant :ghost
+              :size :icon
+              :class "self-start h-5 w-5 opacity-20 hover:opacity-70"
+              :title (if plugin-renderer-error?
+                       "Retry plugin renderer"
+                       "Switch to plugin renderer")
+              :on-pointer-down util/stop
+              :on-click (fn [e]
+                          (util/stop e)
+                          (reset! *plugin-renderer-error? false)
+                          (reset! *use-plugin-renderer? true))}
+             (shui/tabler-icon "puzzle-piece" {:size 13})))]]
+
     [:div.ls-block.swipe-item
      (cond->
       {:id (str "ls-block-"
@@ -3461,32 +3623,32 @@
                                    :*control-show? *control-show?
                                    :edit? edit?}))))
 
-        [:div.flex.flex-col.w-full
-         [:div.block-main-content.flex.flex-row.gap-2
-          (when page-icon
-            page-icon)
-
-          ;; Not embed self
+        (if (= :plugin renderer-display-mode)
+          ;; --- Plugin renderer: full-block replacement ---
           [:div.flex.flex-col.w-full
-           (let [block (merge block (block/parse-title-and-body uuid (get block :block/format :markdown) title))
-                 hide-block-refs-count? (or (and (:embed? config)
-                                                 (= (:block/uuid block) (:embed-id config)))
-                                            table?)]
-             (block-content-or-editor config
-                                      block
-                                      {:edit-input-id edit-input-id
-                                       :block-id block-id
-                                       :edit? editing?
-                                       :refs-count refs-count
-                                       :*hide-block-refs? *hide-block-refs?
-                                       :hide-block-refs-count? hide-block-refs-count?
-                                       :*show-query? *show-query?}))]]
+           [:div.ls-block-plugin-renderer
+            (rum/with-key
+              (block-renderer-error-boundary
+                {:on-error (fn [_error]
+                             (reset! *plugin-renderer-error? true))
+                 :fallback-view outline-view-cp}
+                (some-> (:render matched-block-renderer) (apply [block-renderer-props-js])))
+              (str "block-renderer-" (:key matched-block-renderer) "-" uuid))]
+           (when (show-block-renderer-outline-toggle? renderer-display-mode)
+             (shui/button
+               {:variant :ghost
+                :size :icon
+                :class "self-start h-5 w-5 opacity-20 hover:opacity-70 mt-1"
+                :title "Switch to outline view"
+                :on-pointer-down util/stop
+                :on-click (fn [e]
+                            (util/stop e)
+                            (reset! *plugin-renderer-error? false)
+                            (reset! *use-plugin-renderer? false))}
+               (shui/tabler-icon "layout-list" {:size 13})))]
 
-         (when (and (not collapsed?) (not (or table? property?)))
-           (block-positioned-properties config block :block-below))
-
-         (when-not (or (:table? config) (:property? config))
-           (block-reactions block))]])
+          ;; --- Original outline ---
+          outline-view-cp)])
 
      (when (and (not (:library? config))
                 (or (:tag-dialog? config)
@@ -3532,9 +3694,14 @@
                                 (if advanced-query? result {:builder nil
                                                             :query (query-builder-component/sanitize-q query)}))])))
 
-     (when-not (or (:hide-children? config) table? property?)
+     (when-not (or (:hide-children? config)
+                 table?
+                 property?
+                 (block-renderer-hides-outline-children?
+                   renderer-display-mode
+                   {:matched-block-renderer matched-block-renderer}))
        (let [config' (-> (update config :level inc)
-                         (dissoc :original-block :data))]
+                       (dissoc :original-block :data))]
          (block-children config' block children collapsed?)))
 
      (when-not (or table? property?)
