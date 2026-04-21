@@ -1,31 +1,52 @@
 # Logseq Experiments API Guide
 
-This guide covers the **experimental APIs** available in the Logseq Plugin SDK. These APIs provide advanced functionality for creating custom renderers, loading external scripts, and accessing internal utilities.
+This guide covers the **experimental APIs** exposed as `logseq.Experiments` in the Logseq Plugin SDK.
 
-> **⚠️ WARNING**: These are experimental features that may change at any time. Plugins using these APIs may not be supported on the Marketplace temporarily.
+These APIs are intentionally lower-level than the stable SDK. They let plugins:
+
+- reuse host React/ReactDOM
+- render internal Logseq components
+- convert between JS and ClojureScript data structures
+- load scripts dynamically
+- register custom renderers for fenced code, routes, sidebars, properties, and block bodies
+- hook internal extensions such as KaTeX
+- access host/plugin internals when absolutely necessary
+
+> **⚠️ Warning**
+>
+> Everything in `logseq.Experiments` is unstable. Signatures, render props, and behaviors may change without a normal deprecation window. Plugins using these APIs may be temporarily unsupported on the Marketplace.
 
 ---
 
 ## Overview
 
-The Experiments API is accessed via `logseq.Experiments` and provides:
+The current experimental surface includes:
 
-1. **React Integration** - Access to React and ReactDOM from the host
-2. **Custom Renderers** - Register custom code block, route, and daemon renderers
-3. **Component Access** - Access to internal Logseq components
-4. **Utilities** - ClojureScript interop utilities (toClj, toJs, etc.)
-5. **Script Loading** - Dynamic loading of external scripts
-6. **Extension Enhancers** - Enhance libraries like KaTeX and CodeMirror
+1. **React integration**: `React`, `ReactDOM`
+2. **Internal components**: `Components.Editor`
+3. **Interop utilities**: `Utils.toClj`, `toJs`, `jsxToClj`, `toKeyword`, `toSymbol`
+4. **Script loading**: `loadScripts(...)`
+5. **Renderer registration**:
+   - `registerFencedCodeRenderer(...)`
+   - `registerDaemonRenderer(...)`
+   - `registerRouteRenderer(...)`
+   - `registerHostedRenderer(...)`
+   - `registerSidebarRenderer(...)`
+   - `registerBlockPropertiesRenderer(...)`
+   - `registerBlockRenderer(...)`
+6. **Extension enhancers**: `registerExtensionsEnhancer(...)`
+7. **Host/plugin internals**:
+   - `pluginLocal`
+   - `ensureHostScope()`
+   - `invokeExperMethod(...)`
 
 ---
 
 ## 1. React Integration
 
-Access React and ReactDOM from the Logseq host environment.
+Use the host's React runtime instead of bundling your own copy.
 
-### Properties
-
-#### `logseq.Experiments.React`
+### `logseq.Experiments.React`
 
 Returns the React instance from the host scope.
 
@@ -33,7 +54,7 @@ Returns the React instance from the host scope.
 const React = logseq.Experiments.React
 ```
 
-#### `logseq.Experiments.ReactDOM`
+### `logseq.Experiments.ReactDOM`
 
 Returns the ReactDOM instance from the host scope.
 
@@ -41,83 +62,84 @@ Returns the ReactDOM instance from the host scope.
 const ReactDOM = logseq.Experiments.ReactDOM
 ```
 
-### Example Usage
+### Example
 
 ```typescript
 const React = logseq.Experiments.React
-const ReactDOM = logseq.Experiments.ReactDOM
 
-// Use React to create components
-const MyComponent = React.createElement('div', null, 'Hello from plugin!')
+const MyComponent = React.createElement(
+  'div',
+  { className: 'my-plugin-card' },
+  'Hello from a host React tree'
+)
 ```
 
 ---
 
 ## 2. Components
 
-Access internal Logseq components for advanced UI integration.
-
 ### `logseq.Experiments.Components.Editor`
 
-A page editor component that can render Logseq page content.
+Renders Logseq page content using an internal page editor component.
 
-**Type**: `(props: { page: string } & any) => any`
+**Type**
 
-**Parameters**:
-- `page` (string): The page name to render
+```typescript
+(props: { page: string } & Record<string, any>) => any
+```
+
+**Parameters**
+
+- `page`: page name to render
 
 ```typescript
 const Editor = logseq.Experiments.Components.Editor
 
-// Render a page editor
-const editor = Editor({ page: 'My Page Name' })
+const preview = Editor({ page: 'My Page Name' })
 ```
 
 ---
 
 ## 3. Utilities
 
-ClojureScript interop utilities for data conversion between JavaScript and ClojureScript.
+`logseq.Experiments.Utils` exposes host interop helpers.
 
-### `logseq.Experiments.Utils`
+### `toClj(input: any)`
 
-Provides conversion utilities:
-
-#### `toClj(input: any)`
-
-Convert JavaScript data to ClojureScript data structures.
+Convert JavaScript data into ClojureScript data structures.
 
 ```typescript
 const cljData = logseq.Experiments.Utils.toClj({ key: 'value' })
 ```
 
-#### `jsxToClj(input: any)`
+### `jsxToClj(input: any)`
 
-Convert JSX/JavaScript objects to ClojureScript, preserving JSX structures.
+Convert JS/JSX-style input to ClojureScript while preserving JSX-ish structures better than a plain conversion.
 
 ```typescript
-const cljData = logseq.Experiments.Utils.jsxToClj(<div>Content</div>)
+const view = { type: 'div', props: { children: 'Content' } }
+const cljView = logseq.Experiments.Utils.jsxToClj(view)
 ```
 
-#### `toJs(input: any)`
+### `toJs(input: any)`
 
-Convert ClojureScript data structures to JavaScript.
+Convert ClojureScript values back into plain JavaScript.
 
 ```typescript
 const jsData = logseq.Experiments.Utils.toJs(cljData)
 ```
 
-#### `toKeyword(input: any)`
+### `toKeyword(input: any)`
 
-Convert a string to a ClojureScript keyword.
+Convert a string into a ClojureScript keyword.
 
 ```typescript
 const keyword = logseq.Experiments.Utils.toKeyword('my-key')
 ```
 
-#### `toSymbol(input: any)`
+### `toSymbol(input: any)`
 
-Convert a string to a ClojureScript symbol.
+Convert a string into a ClojureScript symbol.
 
 ```typescript
 const symbol = logseq.Experiments.Utils.toSymbol('my-symbol')
@@ -129,28 +151,31 @@ const symbol = logseq.Experiments.Utils.toSymbol('my-symbol')
 
 ### `logseq.Experiments.loadScripts(...scripts: string[])`
 
-Dynamically load external scripts into the Logseq environment.
+Dynamically load scripts into the host environment.
 
-**Parameters**:
-- `scripts` (string[]): Array of script URLs or relative paths
+**Parameters**
 
-**Returns**: `Promise<void>`
+- `scripts`: HTTP(S) URLs or relative plugin resource paths
 
-**Behavior**:
-- Relative paths are resolved using the plugin's resource path
-- HTTP/HTTPS URLs are loaded directly
-- Scripts are loaded in order
+**Returns**
 
 ```typescript
-// Load external library
+Promise<void>
+```
+
+**Behavior**
+
+- relative paths are resolved against the current plugin resource root
+- HTTP/HTTPS URLs are used as-is
+- scripts are loaded in the given order
+
+```typescript
 await logseq.Experiments.loadScripts(
-  'https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js'
+  'https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.umd.min.js'
 )
 
-// Load local script from plugin resources
-await logseq.Experiments.loadScripts('./my-script.js')
+await logseq.Experiments.loadScripts('./vendor/local-helper.js')
 
-// Load multiple scripts
 await logseq.Experiments.loadScripts(
   'https://cdn.example.com/lib1.js',
   'https://cdn.example.com/lib2.js',
@@ -162,193 +187,438 @@ await logseq.Experiments.loadScripts(
 
 ## 5. Custom Renderers
 
-### 5.1 Fenced Code Renderer
+Experimental renderers are where most of the newer APIs live.
 
-Register a custom renderer for code blocks with specific language tags.
+## 5.1 Fenced Code Renderer
 
-#### `logseq.Experiments.registerFencedCodeRenderer(lang: string, opts: object)`
+Register a custom renderer for fenced code blocks such as:
 
-**Parameters**:
-- `lang` (string): The language identifier for the code block (e.g., 'mermaid', 'chart')
-- `opts` (object):
-  - `render` (function, required): Render function that receives props
-  - `edit` (boolean, optional): Whether the block is editable
-  - `before` (function, optional): Async function to run before rendering
-  - `subs` (string[], optional): Subscriptions to state changes
-
-**Render Props**:
-- `content` (string): The content of the code block
-
-```typescript
-// Register a custom code block renderer
-logseq.Experiments.registerFencedCodeRenderer('my-chart', {
-  edit: false,
-  before: async () => {
-    // Load dependencies before rendering
-    await logseq.Experiments.loadScripts(
-      'https://cdn.jsdelivr.net/npm/chart.js'
-    )
-  },
-  render: (props) => {
-    const React = logseq.Experiments.React
-    
-    return React.createElement('div', {
-      ref: (el) => {
-        if (el) {
-          // Parse content and render chart
-          const config = JSON.parse(props.content)
-          new Chart(el, config)
-        }
-      }
-    })
-  }
-})
-```
-
-**Usage in Logseq**:
 ````markdown
-```my-chart
-{
-  "type": "bar",
-  "data": {
-    "labels": ["A", "B", "C"],
-    "datasets": [{"data": [10, 20, 30]}]
-  }
-}
+```my-lang
+...
 ```
 ````
 
-### 5.2 Daemon Renderer
+### `logseq.Experiments.registerFencedCodeRenderer(lang, opts)`
 
-Register a renderer that runs continuously in the background (daemon).
+```text
+registerFencedCodeRenderer(
+  lang: string,
+  opts: {
+    edit?: boolean
+    before?: () => Promise<void>
+    subs?: string[]
+    render: (props: { content: string }) => any
+  }
+): any
+```
 
-#### `logseq.Experiments.registerDaemonRenderer(key: string, opts: object)`
+**Options**
 
-**Parameters**:
-- `key` (string): Unique identifier for the daemon renderer
-- `opts` (object):
-  - `render` (function, required): Render function
-  - `sub` (string[], optional): Subscriptions to state changes
+- `edit`: whether the fenced block remains editable
+- `before`: async preload hook, usually for loading scripts/assets
+- `subs`: experimental subscription list
+- `render`: React renderer receiving `{ content }`
 
 ```typescript
-// Register a daemon renderer for persistent UI
-logseq.Experiments.registerDaemonRenderer('my-status-bar', {
-  sub: ['ui/theme', 'ui/sidebar-open'],
-  render: (props) => {
+logseq.Experiments.registerFencedCodeRenderer('my-chart', {
+  edit: false,
+  before: async () => {
+    await logseq.Experiments.loadScripts(
+      'https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.umd.min.js'
+    )
+  },
+  render: ({ content }) => {
     const React = logseq.Experiments.React
-    
-    return React.createElement('div', {
-      style: {
-        position: 'fixed',
-        bottom: 0,
-        right: 0,
-        padding: '10px',
-        background: '#333',
-        color: '#fff'
-      }
-    }, 'Status: Active')
-  }
+
+    return React.createElement('canvas', {
+      ref: (canvas: HTMLCanvasElement | null) => {
+        if (!canvas || !window.Chart) return
+
+        try {
+          const config = JSON.parse(content)
+          new window.Chart(canvas, config)
+        } catch (error) {
+          console.error('Chart renderer error', error)
+        }
+      },
+    })
+  },
 })
 ```
 
-### 5.3 Route Renderer
+## 5.2 Daemon Renderer
 
-Register a custom renderer for specific routes in Logseq.
+Register a renderer that stays mounted in a global daemon container.
 
-#### `logseq.Experiments.registerRouteRenderer(key: string, opts: object)`
+### `logseq.Experiments.registerDaemonRenderer(key, opts)`
 
-**Parameters**:
-- `key` (string): Unique identifier for the route renderer
-- `opts` (object):
-  - `path` (string, required): Route path (e.g., '/my-plugin-page')
-  - `render` (function, required): Render function
-  - `name` (string, optional): Display name for the route
-  - `subs` (string[], optional): Subscriptions to state changes
+```text
+registerDaemonRenderer(
+  key: string,
+  opts: {
+    before?: () => Promise<void>
+    subs?: string[]
+    render: (props: {}) => any
+  }
+): any
+```
+
+**Notes**
+
+- use `subs`, not `sub`
+- `before` is supported by the host even if older typings may not show it yet
+- daemon renderers are useful for lightweight always-on UI, not large app shells
 
 ```typescript
-// Register a custom route
+logseq.Experiments.registerDaemonRenderer('my-status-bar', {
+  subs: ['ui/theme'],
+  render: () => {
+    const React = logseq.Experiments.React
+
+    return React.createElement(
+      'div',
+      {
+        style: {
+          position: 'fixed',
+          right: 12,
+          bottom: 12,
+          padding: '6px 10px',
+          borderRadius: 8,
+          background: 'var(--ls-secondary-background-color)',
+        },
+      },
+      'Plugin active'
+    )
+  },
+})
+```
+
+## 5.3 Route Renderer
+
+Register a custom route view.
+
+### `logseq.Experiments.registerRouteRenderer(key, opts)`
+
+```text
+registerRouteRenderer(
+  key: string,
+  opts: {
+    path: string
+    name?: string
+    subs?: string[]
+    render: (props: {}) => any
+  }
+): any
+```
+
+**Options**
+
+- `path`: route path, e.g. `'/my-plugin-dashboard'`
+- `name`: optional display name; if omitted, the internal key is reused
+- `subs`: experimental subscription list
+- `render`: route component
+
+```typescript
 logseq.Experiments.registerRouteRenderer('my-custom-page', {
   path: '/my-plugin-dashboard',
   name: 'Dashboard',
-  subs: ['ui/theme'],
-  render: (props) => {
+  render: () => {
     const React = logseq.Experiments.React
-    
-    return React.createElement('div', {
-      className: 'my-plugin-dashboard'
-    }, [
-      React.createElement('h1', null, 'Plugin Dashboard'),
-      React.createElement('p', null, 'Custom content here')
-    ])
-  }
-})
 
-// Navigate to the route
-logseq.App.pushState('page', { name: 'my-plugin-dashboard' })
+    return React.createElement('div', { className: 'my-plugin-dashboard' }, [
+      React.createElement('h1', { key: 'title' }, 'Plugin Dashboard'),
+      React.createElement('p', { key: 'body' }, 'Custom content here'),
+    ])
+  },
+})
+```
+
+> Route navigation is handled by Logseq's router. In docs and examples, prefer describing the registered `path` rather than relying on page navigation APIs, which are not the same thing.
+
+## 5.4 Hosted Renderer
+
+Low-level API for host-managed render targets.
+
+Today, the main built-in consumer is the right sidebar, so most plugins should prefer `registerSidebarRenderer(...)` unless they specifically need the lower-level primitive.
+
+### `logseq.Experiments.registerHostedRenderer(key, opts)`
+
+```text
+registerHostedRenderer(
+  key: string,
+  opts: {
+    title?: string
+    mode?: string
+    type?: string
+    subs?: string[]
+    render: (props: {}) => any
+  }
+): any
+```
+
+**Options**
+
+- `title`: display title when the host surfaces the renderer
+- `type`: host-specific placement type
+- `mode`: host-specific placement mode
+- `subs`: experimental subscription list
+- `render`: React renderer
+
+The host currently passes the registered renderer record back into the render function in some placements. Treat that as implementation detail, not a stable contract.
+
+## 5.5 Sidebar Renderer
+
+Convenience wrapper over `registerHostedRenderer(...)` for right-sidebar tools.
+
+### `logseq.Experiments.registerSidebarRenderer(key, opts)`
+
+```text
+registerSidebarRenderer(
+  key: string,
+  opts: {
+    title?: string
+    subs?: string[]
+    render: (props: {}) => any
+    [key: string]: any
+  }
+): any
+```
+
+**Behavior**
+
+- your key is automatically namespaced internally as `_sidebar.${key}`
+- `type` is forced to `'sidebar'`
+- the renderer appears in the right-sidebar plugin menu
+
+```typescript
+logseq.Experiments.registerSidebarRenderer('inspector', {
+  title: 'Inspector',
+  render: () => {
+    const React = logseq.Experiments.React
+
+    return React.createElement('div', null, 'Hello from the sidebar renderer')
+  },
+})
+```
+
+## 5.6 Block Properties Renderer
+
+Render custom UI inside a block's properties area.
+
+### `logseq.Experiments.registerBlockPropertiesRenderer(key, opts)`
+
+```text
+type BlockPropertiesCondition =
+  | { has: string }
+  | { equals: [string, any] }
+  | { in: [string, any[]] }
+  | { not: BlockPropertiesCondition }
+  | { any: BlockPropertiesCondition[] }
+  | { all: BlockPropertiesCondition[] }
+
+type BlockPropertiesRendererProps = {
+  blockId: string
+  properties: Record<string, any>
+}
+
+registerBlockPropertiesRenderer(
+  key: string,
+  opts: {
+    when?: BlockPropertiesCondition | ((props: BlockPropertiesRendererProps) => boolean)
+    mode?: 'prepend' | 'append' | 'replace'
+    priority?: number
+    subs?: string[]
+    render: (props: BlockPropertiesRendererProps) => any
+  }
+): any
+```
+
+**Behavior**
+
+- `when` may be omitted, a declarative condition, or a synchronous predicate
+- `mode` controls placement in the properties area:
+  - `prepend`: before native properties
+  - `append`: after native properties
+  - `replace`: replace native properties UI
+- higher `priority` wins for conflicts
+- for `replace`, the highest-priority matching replace renderer wins
+- for `prepend`/`append`, all matching renderers are rendered in priority order
+
+**Render props**
+
+- `blockId`: block UUID string
+- `properties`: plain JS object keyed by property names without the leading `:`
+
+**Property serialization details**
+
+Before data is passed into plugins, Logseq normalizes some values:
+
+- keywords become strings like `'logseq.property/status'`
+- UUIDs become strings
+- entity references become small objects such as `{ uuid, title }`
+- sets / collections of entity references become arrays of those objects
+
+```typescript
+logseq.Experiments.registerBlockPropertiesRenderer('priority-pill', {
+  when: { has: 'priority' },
+  mode: 'prepend',
+  priority: 10,
+  render: ({ properties }) => {
+    const React = logseq.Experiments.React
+    const priority = properties.priority
+
+    if (!priority) return null
+
+    return React.createElement(
+      'span',
+      {
+        style: {
+          display: 'inline-flex',
+          marginRight: 8,
+          padding: '2px 8px',
+          borderRadius: 9999,
+          fontSize: 12,
+          background: 'var(--ls-tertiary-background-color)',
+        },
+      },
+      `Priority: ${priority}`
+    )
+  },
+})
+```
+
+## 5.7 Block Renderer
+
+Replace a block's main outline body with plugin UI.
+
+### `logseq.Experiments.registerBlockRenderer(key, opts)`
+
+```text
+type BlockRendererChild = Record<string, any> & {
+  children?: BlockRendererChild[]
+}
+
+type BlockRendererProps = {
+  blockId: string
+  properties: Record<string, any>
+  uuid?: string
+  page?: string
+  content?: string
+  format?: string
+  children?: BlockRendererChild[]
+}
+
+registerBlockRenderer(
+  key: string,
+  opts: {
+    when?: (props: BlockRendererProps) => boolean
+    includeChildren?: boolean
+    priority?: number
+    subs?: string[]
+    render: (props: BlockRendererProps) => any
+  }
+): any
+```
+
+**Behavior**
+
+- `when` must be a **synchronous predicate function** if provided
+- declarative conditions are **not** supported here
+- highest `priority` match wins
+- when the plugin renderer is active, users can switch back to the native outline view via built-in UI on that block
+- when `includeChildren` is `true`, Logseq passes a recursive child tree and hides native outline children while the plugin renderer is active
+
+**Render props**
+
+- `blockId`: block UUID string
+- `uuid`: same block UUID
+- `page`: page title
+- `content`: block content/title text
+- `format`: `'markdown'`, `'org'`, etc.
+- `properties`: normalized property object
+- `children`: recursive normalized child tree when `includeChildren` is enabled
+
+```typescript
+logseq.Experiments.registerBlockRenderer('kanban-card', {
+  when: ({ properties }) => properties.view === 'kanban-card',
+  includeChildren: true,
+  priority: 20,
+  render: ({ content, children = [] }) => {
+    const React = logseq.Experiments.React
+
+    return React.createElement('section', { className: 'my-kanban-card' }, [
+      React.createElement('h3', { key: 'title' }, content || 'Untitled'),
+      React.createElement(
+        'ul',
+        { key: 'children' },
+        children.map((child, index) =>
+          React.createElement('li', { key: child.uuid || index }, child.title || child.content)
+        )
+      ),
+    ])
+  },
+})
 ```
 
 ---
 
 ## 6. Extension Enhancers
 
-Enhance external libraries that Logseq uses (like KaTeX for math rendering).
+### `logseq.Experiments.registerExtensionsEnhancer(type, enhancer)`
 
-### `logseq.Experiments.registerExtensionsEnhancer(type: string, enhancer: function)`
+Enhance host libraries such as KaTeX.
 
-**Parameters**:
-- `type` ('katex' | 'codemirror'): The extension type to enhance
-- `enhancer` (function): Async function that receives the library instance and can modify it
+```text
+registerExtensionsEnhancer(
+  type: 'katex' | 'codemirror',
+  enhancer: (value: any) => Promise<any>
+): any
+```
 
-**Returns**: `Promise<void>`
+For `katex`, the host immediately invokes the enhancer if KaTeX is already present.
 
 ```typescript
-// Enhance KaTeX with custom macros
 logseq.Experiments.registerExtensionsEnhancer('katex', async (katex) => {
-  // Add custom KaTeX macros
   katex.macros = {
     ...katex.macros,
     '\\RR': '\\mathbb{R}',
     '\\NN': '\\mathbb{N}',
-    '\\ZZ': '\\mathbb{Z}'
+    '\\ZZ': '\\mathbb{Z}',
   }
-  
-  console.log('KaTeX enhanced with custom macros')
 })
 ```
 
 ---
 
-## 7. Plugin Local Access
+## 7. Host / Plugin Internals
 
-### `logseq.Experiments.pluginLocal`
+## 7.1 `logseq.Experiments.pluginLocal`
 
-Access the internal plugin instance (PluginLocal) for advanced operations.
-
-**Type**: `PluginLocal`
+Returns the internal `PluginLocal` instance for the current plugin.
 
 ```typescript
 const pluginLocal = logseq.Experiments.pluginLocal
-
-// Access plugin-specific internal state
-console.log('Plugin ID:', pluginLocal.id)
+console.log(pluginLocal.id)
 ```
 
----
+Use this sparingly. It is intentionally internal.
 
-## 8. Advanced: Invoke Experimental Methods
+## 7.2 `logseq.Experiments.ensureHostScope()`
 
-### `logseq.Experiments.invokeExperMethod(type: string, ...args: any[])`
-
-Directly invoke experimental methods from the host scope.
-
-**Parameters**:
-- `type` (string): Method name (converted to snake_case)
-- `...args`: Arguments to pass to the method
-
-**Returns**: `any`
+Returns the host scope, currently `window.top`, after attempting an access check.
 
 ```typescript
-// Invoke a custom experimental method
+const host = logseq.Experiments.ensureHostScope()
+```
+
+This is mostly useful when you need direct access to host globals and understand the risks.
+
+## 7.3 `logseq.Experiments.invokeExperMethod(type, ...args)`
+
+Direct escape hatch for calling experimental host methods.
+
+```typescript
 const result = logseq.Experiments.invokeExperMethod(
   'someExperimentalFeature',
   arg1,
@@ -356,52 +626,47 @@ const result = logseq.Experiments.invokeExperMethod(
 )
 ```
 
+`type` is normalized to snake_case before resolution.
+
 ---
 
-## Complete Example: Custom Chart Renderer
-
-Here's a complete example combining multiple APIs:
+## 8. Complete Example: Fenced Code Renderer
 
 ```typescript
 import '@logseq/libs'
 
 async function main() {
-  console.log('Chart Plugin Loaded')
-  
-  // Register fenced code renderer for charts
   logseq.Experiments.registerFencedCodeRenderer('chart', {
     edit: false,
     before: async () => {
-      // Load Chart.js before rendering
       await logseq.Experiments.loadScripts(
-        'https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js'
+        'https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.umd.min.js'
       )
     },
-    render: (props) => {
+    render: ({ content }) => {
       const React = logseq.Experiments.React
-      
-      return React.createElement('div', null, [
-        React.createElement('canvas', {
-          ref: (canvas) => {
-            if (canvas && window.Chart) {
-              try {
-                const config = JSON.parse(props.content)
-                new window.Chart(canvas, config)
-              } catch (e) {
-                console.error('Chart rendering error:', e)
-              }
-            }
+
+      return React.createElement('canvas', {
+        ref: (canvas: HTMLCanvasElement | null) => {
+          if (!canvas || !window.Chart) return
+
+          try {
+            const config = JSON.parse(content)
+            new window.Chart(canvas, config)
+          } catch (error) {
+            console.error('Chart rendering error:', error)
           }
-        })
-      ])
-    }
+        },
+      })
+    },
   })
 }
 
 logseq.ready(main).catch(console.error)
 ```
 
-**Usage**:
+**Usage**
+
 ````markdown
 ```chart
 {
@@ -420,41 +685,100 @@ logseq.ready(main).catch(console.error)
 
 ---
 
-## Best Practices
+## 9. Complete Example: Block Properties Badge
 
-1. **Check Host Scope**: Always ensure the host scope is accessible before using experimental APIs
-2. **Error Handling**: Wrap experimental API calls in try-catch blocks
-3. **Dependencies**: Load external scripts in `before` hooks to ensure they're ready
-4. **Memory Management**: Clean up event listeners and subscriptions in daemon renderers
-5. **Compatibility**: Test thoroughly as these APIs may change between Logseq versions
-6. **Documentation**: Document which experimental APIs your plugin uses
-7. **Marketplace**: Be aware that plugins using these APIs may not be accepted on the Marketplace
+```typescript
+import '@logseq/libs'
+
+async function main() {
+  logseq.Experiments.registerBlockPropertiesRenderer('task-status-chip', {
+    when: {
+      any: [
+        { equals: ['status', 'todo'] },
+        { equals: ['status', 'doing'] },
+      ],
+    },
+    mode: 'append',
+    priority: 5,
+    render: ({ properties }) => {
+      const React = logseq.Experiments.React
+      const value = properties.status
+
+      return React.createElement(
+        'span',
+        {
+          style: {
+            marginLeft: 8,
+            padding: '2px 8px',
+            borderRadius: 9999,
+            fontSize: 12,
+            background: 'var(--ls-secondary-background-color)',
+          },
+        },
+        `Status: ${value}`
+      )
+    },
+  })
+}
+
+logseq.ready(main).catch(console.error)
+```
 
 ---
 
-## Limitations
+## 10. Best Practices
 
-- **Experimental Status**: These APIs are not stable and may change without notice
-- **Marketplace Support**: Plugins using experimental APIs may not be approved for the Marketplace
-- **Security**: Be cautious when loading external scripts or accessing host scope
-- **Performance**: Custom renderers can impact performance if not optimized
-- **Compatibility**: Limited backwards compatibility guarantees
+1. **Prefer stable APIs first**. Only use `Experiments` when the stable SDK cannot solve the problem.
+2. **Use host React**. Avoid bundling a second React runtime into the same tree.
+3. **Keep `when` predicates synchronous**. This is especially important for `registerBlockRenderer(...)`.
+4. **Use `before` to preload dependencies** instead of doing ad hoc script injection inside render.
+5. **Treat `subs` as experimental**. Reactive semantics may change.
+6. **Keep renderers lightweight**. Block and daemon renderers can affect overall app responsiveness.
+7. **Handle bad input defensively**. Render props often contain user-authored content and properties.
+8. **Document your experimental usage** in the plugin README so users understand the risk.
+9. **Prefer `registerSidebarRenderer(...)` over raw hosted renderers** when your goal is a right-sidebar tool.
+10. **Test against real graphs**. Property values, references, and child trees can vary a lot.
+
+---
+
+## 11. Limitations and Notes
+
+- **Experimental status**: no stability guarantee
+- **Marketplace support**: may be restricted temporarily
+- **Security**: be careful with external scripts and direct host access
+- **Performance**: custom renderers run inside the app UI, so poor implementations are noticeable
+- **Typings may lag behavior**: some newer runtime options can land before every generated wrapper/type is refreshed
+
+### ClojureScript SDK note
+
+The generated ClojureScript wrapper namespace `com.logseq.experiments` currently includes wrappers for:
+
+- `load-scripts`
+- `register-fenced-code-renderer`
+- `register-daemon-renderer`
+- `register-hosted-renderer`
+- `register-sidebar-renderer`
+- `register-route-renderer`
+- `register-extensions-enhancer`
+
+At the time of writing, `register-block-properties-renderer` and `register-block-renderer` are not yet present in that generated wrapper, so ClojureScript plugins may need to call them via `invoke-exper-method` until the wrapper is regenerated.
 
 ---
 
 ## See Also
 
-- [Starter Guide](./starter_guide.md) - Getting started with plugin development
-- [DB Properties Guide](./db_properties_guide.md) - Working with database properties
-- [DB Query Guide](./db_query_guide.md) - Querying the Logseq database
+- [Starter Guide](./starter_guide.md) - getting started with plugin development
+- [DB Properties Guide](./db_properties_guide.md) - working with database properties
+- [DB Query Guide](./db_query_guide.md) - querying the Logseq database
 
 ---
 
 ## Support
 
 For questions and issues:
-- [Logseq Discord](https://discord.gg/logseq) - #plugin-dev channel
+
+- [Logseq Discord](https://discord.gg/logseq) - `#plugin-dev`
 - [GitHub Discussions](https://github.com/logseq/logseq/discussions)
 - [Plugin API Documentation](https://plugins-doc.logseq.com/)
 
-Remember: These are experimental features. Use at your own risk and always test thoroughly!
+Remember: these are experimental features. Use them carefully and test thoroughly.
