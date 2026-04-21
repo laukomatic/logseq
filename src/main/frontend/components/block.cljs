@@ -3322,6 +3322,19 @@
   [display-mode]
   (= :plugin display-mode))
 
+(rum/defc setup-plugin-renderer-effects!
+  [editing? switch-to-plugin-renderer!]
+  (let [*previous-editing? (hooks/use-ref editing?)]
+    (hooks/use-effect!
+      (fn []
+        (let [previous-editing? (.-current *previous-editing?)]
+          (when (and previous-editing? (not editing?))
+            (switch-to-plugin-renderer!))
+          (set! (.-current *previous-editing?) editing?))
+        (fn []))
+      [editing?])
+    [:<>]))
+
 (defn- block-renderer-hides-outline-children?
   [display-mode {:keys [matched-block-renderer]}]
   (boolean (and (= :plugin display-mode)
@@ -3391,8 +3404,8 @@
   (mixins/event-mixin
    (fn [state]
      (let [*ref (::ref state)]
-                                                                      ;; React doesn't let us directly control passive via onTouchMove
-                                                                      ;; So here we listen `touchmove` on the block node
+       ;; React doesn't let us directly control passive via onTouchMove
+       ;; So here we listen `touchmove` on the block node
        (mixins/listen state @*ref "touchmove" block-handler/on-touch-move))))
   [state container-state repo config* block {:keys [navigating-block navigated? editing? selected?] :as opts}]
   (let [*ref (::ref state)
@@ -3400,9 +3413,16 @@
         *show-query? (get state ::show-query?)
         show-query? (rum/react *show-query?)
         *plugin-renderer-error? (get state ::plugin-renderer-error?)
-        plugin-renderer-error? (rum/react *plugin-renderer-error?)
         *use-plugin-renderer? (get state ::use-plugin-renderer?)
+        plugin-renderer-error? (rum/react *plugin-renderer-error?)
         use-plugin-renderer? (rum/react *use-plugin-renderer?)
+        switch-to-plugin-renderer! (fn []
+                                     (reset! *plugin-renderer-error? false)
+                                     (reset! *use-plugin-renderer? true))
+        switch-to-outline-view! (fn []
+                                  (reset! *plugin-renderer-error? false)
+                                  (reset! *use-plugin-renderer? false))
+        set-plugin-renderer-error! #(reset! *plugin-renderer-error? %)
         *refs-count (get state ::refs-count)
         hide-block-refs? (rum/react *hide-block-refs?)
         refs-count (rum/react *refs-count)
@@ -3495,6 +3515,11 @@
                                       :use-plugin-renderer? use-plugin-renderer?
                                       :editing? editing?
                                       :plugin-renderer-error? plugin-renderer-error?})
+        switch-to-plugin-renderer-title
+        (t (if plugin-renderer-error?
+             :block/retry-plugin-renderer
+             :block/switch-to-plugin-renderer))
+        switch-to-outline-view-title (t :block/switch-to-outline-view)
         outline-view-cp
         [:div.flex.flex-col.w-full
          (block-renderer-outline-view config block uuid title table? property? edit-input-id editing? refs-count *hide-block-refs? *show-query? page-icon block-id collapsed?)
@@ -3506,65 +3531,63 @@
              {:variant :ghost
               :size :icon
               :class "self-start h-5 w-5 opacity-20 hover:opacity-70"
-              :title (if plugin-renderer-error?
-                       "Retry plugin renderer"
-                       "Switch to plugin renderer")
+              :title switch-to-plugin-renderer-title
+              :aria-label switch-to-plugin-renderer-title
               :on-pointer-down util/stop
               :on-click (fn [e]
-                          (util/stop e)
-                          (reset! *plugin-renderer-error? false)
-                          (reset! *use-plugin-renderer? true))}
+                           (util/stop e)
+                           (switch-to-plugin-renderer!))}
              (shui/tabler-icon "puzzle-piece" {:size 13})))]]
 
     [:div.ls-block.swipe-item
      (cond->
-      {:id (str "ls-block-"
-                ;; container-id "-"
-                uuid)
-       :blockid (str uuid)
-       :containerid container-id
-       :data-is-property (ldb/property? block)
-       :ref #(when (nil? @*ref) (reset! *ref %))
-       :data-collapsed (and collapsed? has-child?)
-       :class (str (when selected? "selected")
-                   (when (ldb/recycled? block) " line-through opacity-70")
-                   (when order-list? " is-order-list")
-                   (when (string/blank? title) " is-blank")
-                   (when original-block " embed-block"))
-       :haschild (str (boolean has-child?))
-       :on-touch-start (fn [event uuid]
-                         (when-not (or @*dragging? (state/editing?))
-                           (block-handler/on-touch-start event uuid)))
-       :on-touch-end (fn [event]
-                       (when-not @*dragging?
-                         (block-handler/on-touch-end event))
-                       (reset! *dragging? false))
-       :on-touch-cancel (fn [e]
-                          (block-handler/on-touch-cancel e))}
+       {:id (str "ls-block-"
+              ;; container-id "-"
+              uuid)
+        :blockid (str uuid)
+        :containerid container-id
+        :data-is-property (ldb/property? block)
+        :ref #(when (nil? @*ref) (reset! *ref %))
+        :data-collapsed (and collapsed? has-child?)
+        :class (str (when selected? "selected")
+                 (when (ldb/recycled? block) " line-through opacity-70")
+                 (when order-list? " is-order-list")
+                 (when (string/blank? title) " is-blank")
+                 (when original-block " embed-block"))
+        :haschild (str (boolean has-child?))
+        :on-touch-start (fn [event uuid]
+                          (when-not (or @*dragging? (state/editing?))
+                            (block-handler/on-touch-start event uuid)))
+        :on-touch-end (fn [event]
+                        (when-not @*dragging?
+                          (block-handler/on-touch-end event))
+                        (reset! *dragging? false))
+        :on-touch-cancel (fn [e]
+                           (block-handler/on-touch-cancel e))}
 
        (and (util/capacitor?) (not (ldb/page? block)))
        (assoc
-        :draggable true
-        :on-drag-start
-        (fn [event]
-          (when-not (state/editing?)
-            (util/stop-propagation event)
-            (let [target ^js (.-target event)
-                  blocks (or (seq (state/get-selection-blocks)) [target])
-                  multiple? (> (count blocks) 1)
-                  element (when multiple?
-                            (let [element (dom/create-element "div")]
-                              (-> element
-                                  (dom/set-attr! "id" "dragging-ghost-element")
-                                  (dom/set-text! (t :editor/moving-blocks-count (count blocks)))
-                                  (dom/set-class! "p-2 rounded text-sm"))
-                              element))]
-              (doseq [block blocks]
-                (dom/add-class! block "dragging"))
-              (on-drag-start event block block-id)
-              (when element
-                (dom/append! js/document.body element)
-                (dnd/set-drag-image! event element (/ (.-offsetWidth target) 2) (/ (.-offsetHeight target) 2)))))))
+         :draggable true
+         :on-drag-start
+         (fn [event]
+           (when-not (state/editing?)
+             (util/stop-propagation event)
+             (let [target ^js (.-target event)
+                   blocks (or (seq (state/get-selection-blocks)) [target])
+                   multiple? (> (count blocks) 1)
+                   element (when multiple?
+                             (let [element (dom/create-element "div")]
+                               (-> element
+                                 (dom/set-attr! "id" "dragging-ghost-element")
+                                 (dom/set-text! (t :editor/moving-blocks-count (count blocks)))
+                                 (dom/set-class! "p-2 rounded text-sm"))
+                               element))]
+               (doseq [block blocks]
+                 (dom/add-class! block "dragging"))
+               (on-drag-start event block block-id)
+               (when element
+                 (dom/append! js/document.body element)
+                 (dnd/set-drag-image! event element (/ (.-offsetWidth target) 2) (/ (.-offsetHeight target) 2)))))))
 
        (:property-default-value? config)
        (assoc :data-is-property-default-value (:property-default-value? config))
@@ -3613,48 +3636,48 @@
 
         (when (and (not property?) (not (:table-block-title? config)))
           (let [edit? (or editing?
-                          (= uuid (:block/uuid (state/get-edit-block))))]
+                        (= uuid (:block/uuid (state/get-edit-block))))]
             (block-control (assoc config :hide-bullet? (:page-title? config))
-                           block
-                           (merge opts
-                                  {:uuid uuid
-                                   :block-id block-id
-                                   :collapsed? collapsed?
-                                   :*control-show? *control-show?
-                                   :edit? edit?}))))
+              block
+              (merge opts
+                {:uuid uuid
+                 :block-id block-id
+                 :collapsed? collapsed?
+                 :*control-show? *control-show?
+                 :edit? edit?}))))
 
         (if (= :plugin renderer-display-mode)
           ;; --- Plugin renderer: full-block replacement ---
-          [:div.flex.flex-col.w-full
+          [:div.block-renderer-container.flex.flex-col.w-full
+           (when (show-block-renderer-outline-toggle? renderer-display-mode)
+             [:div.block-renderer-action-bar
+              (shui/button
+                {:variant :outline
+                 :class "block-renderer-action-btn h-6 w-6"
+                 :title switch-to-outline-view-title
+                 :aria-label switch-to-outline-view-title
+                 :on-pointer-down util/stop
+                 :on-click (fn [e]
+                             (util/stop e)
+                             (switch-to-outline-view!))}
+                (shui/tabler-icon "list" {:size 13}))])
            [:div.ls-block-plugin-renderer
             (rum/with-key
               (block-renderer-error-boundary
                 {:on-error (fn [_error]
-                             (reset! *plugin-renderer-error? true))
+                             (set-plugin-renderer-error! true))
                  :fallback-view outline-view-cp}
                 (some-> (:render matched-block-renderer) (apply [block-renderer-props-js])))
-              (str "block-renderer-" (:key matched-block-renderer) "-" uuid))]
-           (when (show-block-renderer-outline-toggle? renderer-display-mode)
-             (shui/button
-               {:variant :ghost
-                :size :icon
-                :class "self-start h-5 w-5 opacity-20 hover:opacity-70 mt-1"
-                :title "Switch to outline view"
-                :on-pointer-down util/stop
-                :on-click (fn [e]
-                            (util/stop e)
-                            (reset! *plugin-renderer-error? false)
-                            (reset! *use-plugin-renderer? false))}
-               (shui/tabler-icon "layout-list" {:size 13})))]
+              (str "block-renderer-" (:key matched-block-renderer) "-" uuid))]]
 
           ;; --- Original outline ---
           outline-view-cp)])
 
      (when (and (not (:library? config))
-                (or (:tag-dialog? config)
-                    (and
-                     (not collapsed?)
-                     (not (or table? property?)))))
+             (or (:tag-dialog? config)
+               (and
+                 (not collapsed?)
+                 (not (or table? property?)))))
        [:div (when-not (:page-title? config) {:style {:padding-left (if (util/mobile?) 12 45)}})
         (db-properties-cp config block {:in-block-container? true})])
 
@@ -3670,15 +3693,15 @@
              (block-container config query)])]))
 
      (when (and (not (or (:table? config) (:property? config)))
-                (not hide-block-refs?)
-                (> refs-count 0)
-                (not (:page-title? config)))
+             (not hide-block-refs?)
+             (> refs-count 0)
+             (not (:page-title? config)))
        (when-let [refs-cp (state/get-component :block/linked-references)]
          [:div.px-4.py-2.border.rounded.my-2.shadow-xs {:style {:margin-left 42}}
           (refs-cp block {})]))
 
      (when (and (not collapsed?) (not (or table? property?))
-                (ldb/class-instance? (entity-plus/entity-memoized (db/get-db) :logseq.class/Query) block))
+             (ldb/class-instance? (entity-plus/entity-memoized (db/get-db) :logseq.class/Query) block))
        (let [query-block (:logseq.property/query (db/entity (:db/id block)))
              query-block (if query-block (db/sub-block (:db/id query-block)) query-block)
              query (:block/title query-block)
@@ -3687,12 +3710,12 @@
          (when query-block
            [:div {:style {:padding-left 42}}
             (query/custom-query (wrap-query-components (assoc config
-                                                              :dsl-query? (not advanced-query?)
-                                                              :cards? (ldb/class-instance? (entity-plus/entity-memoized
-                                                                                            (db/get-db)
-                                                                                            :logseq.class/Cards) block)))
-                                (if advanced-query? result {:builder nil
-                                                            :query (query-builder-component/sanitize-q query)}))])))
+                                                         :dsl-query? (not advanced-query?)
+                                                         :cards? (ldb/class-instance? (entity-plus/entity-memoized
+                                                                                        (db/get-db)
+                                                                                        :logseq.class/Cards) block)))
+              (if advanced-query? result {:builder nil
+                                          :query (query-builder-component/sanitize-q query)}))])))
 
      (when-not (or (:hide-children? config)
                  table?
@@ -3705,7 +3728,10 @@
          (block-children config' block children collapsed?)))
 
      (when-not (or table? property?)
-       (dnd-separator-wrapper block block-id false))]))
+       (dnd-separator-wrapper block block-id false))
+
+     (when config/lsp-enabled?
+       (setup-plugin-renderer-effects! editing? switch-to-plugin-renderer!))]))
 
 (rum/defc block-container-inner
   [container-state repo config* block opts]

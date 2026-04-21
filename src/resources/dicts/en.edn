@@ -97,10 +97,13 @@
  :block/remove-tag "Remove tag"
  :block/remove-this-tag "Remove this tag"
  :block/render-error "Block Render Error:"
+ :block/retry-plugin-renderer "Retry plugin renderer"
  :block/set-query "Set query"
  :block/set-query-label "Set query:"
  :block/sort-order "Sort order"
  :block/status-history "Status history"
+ :block/switch-to-outline-view "Switch to outline view"
+ :block/switch-to-plugin-renderer "Switch to plugin renderer"
  :block/untitled-query "Untitled query"
 
  :block.macro/embed-deprecated "{{embed}} is deprecated. Use '/Node embed' command instead."
