@@ -476,6 +476,8 @@
   [pid]
   (swap! state/state assoc-in [:plugin/installed-ui-items (keyword pid)] []))
 
+(declare *route-renderer-providers schedule-route-renderer-refresh!)
+
 (defn register-plugin-resources
   [pid type {:keys [key] :as opts}]
   (when-let [pid (keyword pid)]
@@ -504,7 +506,11 @@
 (defn unregister-plugin-resources
   [pid]
   (when-let [pid (keyword pid)]
-    (swap! state/state medley/dissoc-in [:plugin/installed-resources pid])
+    (let [had-routes? (contains? @*route-renderer-providers pid)]
+      (swap! state/state medley/dissoc-in [:plugin/installed-resources pid])
+      (swap! *route-renderer-providers disj pid)
+      (when had-routes?
+        (schedule-route-renderer-refresh!)))
     true))
 
 (defn register-plugin-search-service
@@ -588,10 +594,44 @@
     :extensions-enhancers *extensions-enhancer-providers true))
 
 (defonce *route-renderer-providers (atom #{}))
-(def register-route-renderer
-  ;; [pid key payload]
-  (create-local-renderer-register
-    :route-renderers *route-renderer-providers))
+;; Indirection to avoid a circular dependency on `frontend.core`. The frontend
+;; entry ns installs a fn here that rebuilds the reitit router so plugin routes
+;; registered after initial app start actually take effect.
+(defonce *route-renderer-refresh-fn (atom nil))
+(defonce ^:private *route-renderer-refresh-scheduled? (atom false))
+
+(defn set-route-renderer-refresh-fn!
+  "Registers a 0-arg fn invoked (debounced via microtask) whenever the set of
+   plugin route renderers changes. Called from `frontend.core/set-router!`."
+  [f]
+  (reset! *route-renderer-refresh-fn f))
+
+(defn- schedule-route-renderer-refresh!
+  []
+  (when-let [f @*route-renderer-refresh-fn]
+    (when (compare-and-set! *route-renderer-refresh-scheduled? false true)
+      ;; Coalesce bursts of register/unregister calls into a single rebuild.
+      (js/setTimeout
+        (fn []
+          (reset! *route-renderer-refresh-scheduled? false)
+          (try (f)
+               (catch :default e
+                 (js/console.error "[plugin] refresh route renderer failed" e))))
+        0))))
+
+(let [base-register (create-local-renderer-register
+                      :route-renderers *route-renderer-providers)]
+  (defn register-route-renderer
+    ;; [pid key payload]
+    [pid key opts]
+    (let [unregister (base-register pid key opts)]
+      (schedule-route-renderer-refresh!)
+      (when (fn? unregister)
+        (fn []
+          (let [r (unregister)]
+            (schedule-route-renderer-refresh!)
+            r))))))
+
 (def get-route-renderers
   ;; [key] optional
   (create-local-renderer-getter
