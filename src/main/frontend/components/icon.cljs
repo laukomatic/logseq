@@ -1046,6 +1046,11 @@
   (if @*tabler-icons
     @*tabler-icons
     (let [result (->> (keys (bean/->clj js/tablerIcons))
+                      ;; @tabler/icons-react exports icon components (IconFoo) alongside
+                      ;; utility functions (e.g. createReactComponent). Drop anything that
+                      ;; isn't an icon component — otherwise they surface as phantom entries
+                      ;; in search, render empty, and corrupt the icon property when picked.
+                      (filter #(string/starts-with? (name %) "Icon"))
                       (map (fn [k]
                              (-> (string/replace (csk/->Camel_Snake_Case (name k)) "_" " ")
                                  (string/replace-first "Icon " ""))))
