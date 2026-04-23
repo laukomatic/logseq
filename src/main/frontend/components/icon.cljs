@@ -2186,7 +2186,16 @@
   (rum/local nil ::loaded-assets) ;; Cached assets loaded async
   (rum/local nil ::web-query-debounced) ;; Debounced web search query
   (rum/local false ::popover-open?) ;; Track if any popover is open
-  {:did-mount (fn [state]
+  ;; Create a single stable debounced setter. Must live in state (not the
+   ;; render `let`) so the debounce timer persists across renders — otherwise
+   ;; every keystroke gets a fresh timer and no debouncing happens, causing
+   ;; stale partial-prefix searches to race. Runs as :will-mount (not :init)
+   ;; because rum/local installs its atoms during :will-mount.
+  {:will-mount (fn [state]
+                 (let [*web-query-debounced (::web-query-debounced state)]
+                   (assoc state ::update-web-query!
+                          (debounce (fn [q] (reset! *web-query-debounced q)) 500))))
+   :did-mount (fn [state]
                 ;; Track picker open state
                 (reset! *asset-picker-open? true)
 
@@ -2254,13 +2263,8 @@
                                   assets))
         asset-count (count filtered-assets)
         avatar-mode? (some? avatar-context)
-        ;; Debounced update of web query
-        update-web-query-debounced
-        (memoize
-         (fn []
-           (debounce
-            (fn [q] (reset! *web-query-debounced q))
-            500)))
+        ;; Stable debounced web-query setter (created once in :init)
+        update-web-query! (::update-web-query! state)
         ;; SVG detection helper - checks if URL is an SVG file
         svg-url?
         (fn [url]
@@ -2483,7 +2487,7 @@
                        (let [v (util/evalue e)]
                          (reset! *search-q v)
                          ;; Update debounced web query
-                         ((update-web-query-debounced) v)))})]]]
+                         (update-web-query! v)))})]]]
 
      ;; Body - scrollable content area with top/bottom margin
      (let [;; Get recently used asset UUIDs and resolve to asset entities
