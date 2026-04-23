@@ -408,16 +408,11 @@
 
 .custom-tab-item {
   @apply cursor-pointer;
-  @apply transition-opacity duration-150;
   @apply border-none bg-transparent p-0;
   display: flex !important;
   flex-direction: column !important;
   align-items: center !important;
   gap: 8px !important;
-
-  &:hover {
-    @apply opacity-80;
-  }
 
   &:active {
     @apply opacity-60;
@@ -427,17 +422,15 @@
 .custom-tab-item-preview {
   @apply w-12 h-12 rounded-lg;
   @apply flex items-center justify-center;
-  @apply transition-all duration-150;
-  border: 1px solid var(--rx-gray-06);
-  background-color: var(--rx-gray-03);
   /* Baseline transparent outline so outline-color can transition
      transparent → accent without the browser's currentColor flashing
      through during the discrete style/width jump. */
   outline: 2px solid transparent;
   outline-offset: -2px;
+  transition: background-color 150ms, outline-color 150ms;
 
   &:hover {
-    border-color: var(--rx-accent-09);
+    background-color: var(--rx-gray-05);
   }
 }
 
@@ -464,6 +457,10 @@
   @apply text-xs;
   color: var(--rx-gray-11);
   transition: color 150ms;
+}
+
+.custom-tab-item:hover .custom-tab-item-label {
+  color: var(--rx-gray-12);
 }
 
 /* Shared drag overlay hint — used by both icon picker and asset picker */
