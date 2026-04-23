@@ -1582,7 +1582,7 @@
          :class (when (= "custom-text" highlighted-id) "is-highlighted")
          :on-click #(reset! *view :text-picker)}
         [:div.custom-tab-item-preview
-         (icon text-item {:size 24})]
+         (icon text-item {:size 32})]
         [:span.custom-tab-item-label "Text"]])
 
      ;; Avatar option
@@ -1593,7 +1593,7 @@
          :class (when (= "custom-avatar" highlighted-id) "is-highlighted")
          :on-click #(on-chosen % avatar-item)}
         [:div.custom-tab-item-preview
-         (icon avatar-item {:size 24})]
+         (icon avatar-item {:size 32})]
         [:span.custom-tab-item-label "Avatar"]])
 
      ;; Image option — always show dashed placeholder with camera icon
@@ -1604,15 +1604,15 @@
        :on-click #(reset! *view :asset-picker)}
       [:div.custom-tab-item-preview
        [:span.image-tile-placeholder
-        {:style {:width 28
-                 :height 28
+        {:style {:width 32
+                 :height 32
                  :border "1px dashed var(--rx-gray-08)"
                  :border-radius "3px"
                  :display "flex"
                  :align-items "center"
                  :justify-content "center"
                  :background "var(--rx-gray-03-alpha)"}}
-        (shui/tabler-icon "photo" {:size 16 :style {:color "var(--lx-gray-11)"}})]]
+        (shui/tabler-icon "photo" {:size 20 :style {:color "var(--lx-gray-11)"}})]]
       [:span.custom-tab-item-label "Image"]]]))
 
 ;; <load-asset-url! is defined near the top of the file (unified loader with retry + extension guessing)
