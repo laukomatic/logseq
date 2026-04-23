@@ -430,15 +430,40 @@
   @apply transition-all duration-150;
   border: 1px solid var(--rx-gray-06);
   background-color: var(--rx-gray-03);
+  /* Baseline transparent outline so outline-color can transition
+     transparent → accent without the browser's currentColor flashing
+     through during the discrete style/width jump. */
+  outline: 2px solid transparent;
+  outline-offset: -2px;
 
   &:hover {
     border-color: var(--rx-accent-09);
   }
 }
 
+/* Keyboard-nav highlight for custom tiles: neutralize the generic
+   button.is-highlighted rule (which paints the full column including
+   the label) and move the ring onto the 48x48 preview child instead. */
+.cp__emoji-icon-picker button.custom-tab-item.is-highlighted {
+  background-color: transparent !important;
+  outline: none;
+  border-radius: 0 !important;
+}
+
+.cp__emoji-icon-picker button.custom-tab-item.is-highlighted .custom-tab-item-preview {
+  background-color: var(--lx-accent-04);
+  outline: 2px solid var(--lx-accent-09);
+  outline-offset: -2px;
+}
+
+.cp__emoji-icon-picker button.custom-tab-item.is-highlighted .custom-tab-item-label {
+  color: var(--lx-accent-11);
+}
+
 .custom-tab-item-label {
   @apply text-xs;
   color: var(--rx-gray-11);
+  transition: color 150ms;
 }
 
 /* Shared drag overlay hint — used by both icon picker and asset picker */

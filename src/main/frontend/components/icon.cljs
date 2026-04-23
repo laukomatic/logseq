@@ -1571,12 +1571,16 @@
                        :data {:value avatar-value
                               :backgroundColor backgroundColor
                               :color color}})
-        on-chosen (:on-chosen opts)]
+        on-chosen (:on-chosen opts)
+        highlighted-id (:highlighted-id opts)]
     [:div.custom-tab-content
      ;; Text option
      (when text-item
        [:button.custom-tab-item
-        {:on-click #(reset! *view :text-picker)}
+        {:data-item-id "custom-text"
+         :tabIndex "-1"
+         :class (when (= "custom-text" highlighted-id) "is-highlighted")
+         :on-click #(reset! *view :text-picker)}
         [:div.custom-tab-item-preview
          (icon text-item {:size 24})]
         [:span.custom-tab-item-label "Text"]])
@@ -1584,14 +1588,20 @@
      ;; Avatar option
      (when avatar-item
        [:button.custom-tab-item
-        {:on-click #(on-chosen % avatar-item)}
+        {:data-item-id "custom-avatar"
+         :tabIndex "-1"
+         :class (when (= "custom-avatar" highlighted-id) "is-highlighted")
+         :on-click #(on-chosen % avatar-item)}
         [:div.custom-tab-item-preview
          (icon avatar-item {:size 24})]
         [:span.custom-tab-item-label "Avatar"]])
 
      ;; Image option — always show dashed placeholder with camera icon
      [:button.custom-tab-item
-      {:on-click #(reset! *view :asset-picker)}
+      {:data-item-id "custom-image"
+       :tabIndex "-1"
+       :class (when (= "custom-image" highlighted-id) "is-highlighted")
+       :on-click #(reset! *view :asset-picker)}
       [:div.custom-tab-item-preview
        [:span.image-tile-placeholder
         {:style {:width 28
