@@ -401,6 +401,21 @@
   @apply !w-auto !h-auto;
 }
 
+/* Lift the global `.ui__icon svg { filter: brightness(.8) }` clamp (ui.css)
+   for icons rendered with an explicit color. Color IS the affordance here, so
+   the dark-theme dimming was visibly desaturating values applied via the
+   color picker (e.g. cyan-10 looked muted vs. the swatch it was picked from).
+   Sidebar opacity-70 (container.css) is intentional visual hierarchy and is
+   left intact — it pairs with hover→opacity-100 to give the active cue. */
+.ls-icon-color-wrap.icon-colored .ui__icon svg,
+.ls-icon-color-wrap.icon-colored .ui__icon:hover svg,
+.cp__emoji-icon-picker.icon-colored .pane-section .ui__icon svg,
+.cp__emoji-icon-picker.icon-colored .pane-section .ui__icon:hover svg,
+.icon-cp-container.icon-colored .ui__icon svg,
+.icon-cp-container.icon-colored .ui__icon:hover svg {
+  filter: none !important;
+}
+
 /* Custom tab - Text, Avatar, Image options side by side */
 .custom-tab-content {
   @apply flex flex-row gap-6 p-4 justify-center items-start;

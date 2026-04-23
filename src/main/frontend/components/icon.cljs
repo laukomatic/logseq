@@ -450,10 +450,11 @@
                :else nil)]
     (when item
       (if color?
-        [:span.inline-flex.items-center.ls-icon-color-wrap
-         {:style {:color (or (get-in normalized [:data :color])
-                             (some-> icon' :color)
-                             "inherit")}} item]
+        (let [c (or (get-in normalized [:data :color])
+                    (some-> icon' :color))]
+          [:span.inline-flex.items-center.ls-icon-color-wrap
+           {:class (when (and c (not= c "inherit")) "icon-colored")
+            :style {:color (or c "inherit")}} item])
         item))))
 
 (defn get-node-icon
@@ -537,6 +538,7 @@
       [:div.icon-cp-container.flex.items-center.justify-center
        {:style {:color effective-color}
         :class (str (when photo-icon? "photo-icon")
+                    (when (and effective-color (not= effective-color "inherit")) " icon-colored")
                     (when-let [c (:class opts)] (str " " c)))}
        (icon node-icon opts')])))
 
@@ -3079,7 +3081,10 @@
      (fn []
        (when-let [^js picker (some-> (rum/deref *el) (.closest ".cp__emoji-icon-picker"))]
          (let [c (if (string/blank? effective-color) "inherit" effective-color)]
-           (.setProperty (.-style picker) "--ls-color-icon-preset" c))))
+           (.setProperty (.-style picker) "--ls-color-icon-preset" c)
+           (if (= c "inherit")
+             (.remove (.-classList picker) "icon-colored")
+             (.add (.-classList picker) "icon-colored")))))
      [effective-color])
     ;; Commit effect — only fires on actual selection. Persists + propagates to *color.
     (hooks/use-effect!
