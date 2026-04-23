@@ -3037,7 +3037,9 @@
 
 (rum/defc color-picker
   [*color on-select! & {:keys [on-hover! on-hover-end!]}]
-  (let [[color, set-color!] (rum/use-state @*color)
+  (let [;; Defensive: never let the CSS sentinel "inherit" leak into React state.
+        initial-color (let [v @*color] (when (and v (not= v "inherit")) v))
+        [color, set-color!] (rum/use-state initial-color)
         [hover, set-hover!] (rum/use-state nil)
         ;; hover is nil = not hovering, or {:color X} where X may be nil ("no color")
         effective-color (if hover (:color hover) color)
@@ -3309,11 +3311,17 @@
                  (let [opts (first (:rum/args s))
                        icon-value (:icon-value opts)
                        normalized (normalize-icon icon-value)
-                       *view (::view s)]
+                       *view (::view s)
+                       ;; Prefer current icon's color; fall back to last-used preset.
+                       ;; "inherit" is a CSS-layer sentinel (--ls-color-icon-preset),
+                       ;; not a real color — drop it before it reaches React state.
+                       denull #(when (and % (not= % "inherit")) %)
+                       icon-color (denull (get-in normalized [:data :color]))
+                       stored (denull (storage/get :ls-icon-color-preset))]
                    ;; Avatar/image icons open asset picker, text icons open text-picker
                    (when (contains? #{:avatar :image :text} (:type normalized))
                      (reset! *view (if (= :text (:type normalized)) :text-picker :asset-picker)))
-                   (assoc s ::color (atom (storage/get :ls-icon-color-preset)))))}
+                   (assoc s ::color (atom (or icon-color stored)))))}
   [state {:keys [on-chosen del-btn? icon-value page-title preview-target-db-id] :as opts}]
   (let [*q (::q state)
         *result (::result state)
