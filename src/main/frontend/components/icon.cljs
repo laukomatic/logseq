@@ -2186,13 +2186,22 @@
   (rum/local nil ::loaded-assets) ;; Cached assets loaded async
   (rum/local nil ::web-query-debounced) ;; Debounced web search query
   (rum/local false ::popover-open?) ;; Track if any popover is open
+  (rum/local :avatar ::mode) ;; :avatar | :image — live tab state, seeded in :will-mount
   ;; Create a single stable debounced setter. Must live in state (not the
    ;; render `let`) so the debounce timer persists across renders — otherwise
    ;; every keystroke gets a fresh timer and no debouncing happens, causing
    ;; stale partial-prefix searches to race. Runs as :will-mount (not :init)
    ;; because rum/local installs its atoms during :will-mount.
   {:will-mount (fn [state]
-                 (let [*web-query-debounced (::web-query-debounced state)]
+                 (let [*web-query-debounced (::web-query-debounced state)
+                       *mode (::mode state)
+                       {:keys [current-icon avatar-context]} (first (:rum/args state))
+                       initial-mode (cond
+                                      (= :image  (:type current-icon))  :image
+                                      (= :avatar (:type current-icon))  :avatar
+                                      (some?     avatar-context)        :avatar
+                                      :else                              :avatar)]
+                   (reset! *mode initial-mode)
                    (assoc state ::update-web-query!
                           (debounce (fn [q] (reset! *web-query-debounced q)) 500))))
    :did-mount (fn [state]
@@ -2262,7 +2271,44 @@
                                        (string/lower-case search-q))))
                                   assets))
         asset-count (count filtered-assets)
-        avatar-mode? (some? avatar-context)
+        *mode (::mode state)
+        mode (rum/react *mode)
+        avatar-mode? (= :avatar mode)
+        ;; Stable avatar "template" used both when synthesizing an avatar from
+        ;; an :image icon and when the caller didn't supply an avatar-context.
+        synthesized-avatar-context
+        (or avatar-context
+            {:type :avatar
+             :id (str "avatar-" (or page-title "page"))
+             :label (or page-title "")
+             :data {:value (derive-avatar-initials (or page-title ""))
+                    :backgroundColor "#6B7280"
+                    :color "#6B7280"}})
+        ;; Child components read `(some? avatar-context)` to decide circle vs
+        ;; square; flip that live from the active tab.
+        effective-avatar-context (when avatar-mode? synthesized-avatar-context)
+        ;; Tab click handler. Persists an in-place :type flip when the current
+        ;; icon already has an asset; otherwise it's a local preview only.
+        on-mode-change
+        (fn [new-mode]
+          (when (not= new-mode @*mode)
+            (reset! *mode new-mode)
+            (when-let [asset-uuid (get-in current-icon [:data :asset-uuid])]
+              (let [asset-type (get-in current-icon [:data :asset-type])
+                    image-data {:asset-uuid asset-uuid :asset-type asset-type}
+                    next-icon (case new-mode
+                                :image {:type :image
+                                        :id (str "image-" asset-uuid)
+                                        :label (or (:label current-icon) "")
+                                        :data image-data}
+                                :avatar {:type :avatar
+                                         :id (or (:id synthesized-avatar-context)
+                                                 (str "avatar-" asset-uuid))
+                                         :label (or (:label current-icon)
+                                                    (:label synthesized-avatar-context))
+                                         :data (merge (:data synthesized-avatar-context)
+                                                      image-data)})]
+                (on-chosen nil next-icon true)))))
         ;; Stable debounced web-query setter (created once in :init)
         update-web-query! (::update-web-query! state)
         ;; SVG detection helper - checks if URL is an SVG file
@@ -2295,11 +2341,11 @@
                             (let [image-data {:asset-uuid (str (:block/uuid asset-entity))
                                               :asset-type (:logseq.property.asset/type asset-entity)}]
                               (on-chosen nil
-                                         (if avatar-context
+                                         (if (= :avatar mode)
                                            {:type :avatar
-                                            :id (:id avatar-context)
-                                            :label (:label avatar-context)
-                                            :data (merge (:data avatar-context) image-data)}
+                                            :id (:id synthesized-avatar-context)
+                                            :label (:label synthesized-avatar-context)
+                                            :data (merge (:data synthesized-avatar-context) image-data)}
                                            {:type :image
                                             :id (str "image-" (:block/uuid asset-entity))
                                             :label (or (:block/title asset-entity) "")
@@ -2382,11 +2428,11 @@
                                    (let [image-data {:asset-uuid (str (:block/uuid first-asset))
                                                      :asset-type (:logseq.property.asset/type first-asset)}]
                                      (on-chosen nil
-                                                (if avatar-context
+                                                (if (= :avatar mode)
                                                   {:type :avatar
-                                                   :id (:id avatar-context)
-                                                   :label (:label avatar-context)
-                                                   :data (merge (:data avatar-context) image-data)}
+                                                   :id (:id synthesized-avatar-context)
+                                                   :label (:label synthesized-avatar-context)
+                                                   :data (merge (:data synthesized-avatar-context) image-data)}
                                                   {:type :image
                                                    :id (str "image-" (:block/uuid first-asset))
                                                    :label (or (:block/title first-asset) "")
@@ -2463,18 +2509,25 @@
          [:span.title "Drop images to upload"]
          [:span.subtitle "PNG, JPG, SVG, GIF, WebP"]]])
 
-     ;; Topbar: back button + search
+     ;; Topbar: back | Avatar/Image tabs | trash, then separator, then search
      [:div.asset-picker-topbar
-      [:div.asset-picker-back
-       [:button.back-button
-        {:on-click on-back}
-        (shui/tabler-icon "chevron-left" {:size 16})
-        [:span "Back"]]
-       ;; Delete button (aligned to right)
-       (when del-btn?
-         (shui/button {:variant :outline :size :sm :data-action "del"
-                       :on-click on-delete}
-                      (shui/tabler-icon "trash" {:size 17})))]
+      [:div.asset-picker-tabrow
+       [:div.asset-picker-back
+        [:button.back-button
+         {:on-click on-back}
+         (shui/tabler-icon "chevron-left" {:size 16})
+         [:span "Back"]]]
+       [:div.asset-picker-tabs-slot
+        [:div.tabs-section {:role "tablist"}
+         (ui/tab-items
+          {:tabs [[:avatar "Avatar"] [:image "Image"]]
+           :active mode
+           :on-change (fn [m _e] (on-mode-change m))})]]
+       [:div.asset-picker-trash
+        (when del-btn?
+          (shui/button {:variant :outline :size :sm :data-action "del"
+                        :on-click on-delete}
+                       (shui/tabler-icon "trash" {:size 17})))]]
       (shui/separator {:class "my-0 opacity-50"})
       [:div.asset-picker-search
        [:div.search-input
@@ -2523,7 +2576,7 @@
               (for [asset recently-used-row]
                 (rum/with-key
                   (image-asset-item asset {:on-chosen on-chosen
-                                           :avatar-context avatar-context
+                                           :avatar-context effective-avatar-context
                                            :selected? (= (str (:block/uuid asset)) current-asset-uuid)})
                   (str "recent-" (:block/uuid asset))))])])
 
@@ -2536,7 +2589,7 @@
             ;; skeletons immediately instead of waiting for the debounce.
             :user-typing? (and (not (string/blank? search-q))
                                (not= search-q web-query))
-            :avatar-context avatar-context
+            :avatar-context effective-avatar-context
             :on-select handle-web-image-select
             :on-popover-change #(reset! *popover-open? %)}))
 
@@ -2561,7 +2614,7 @@
               (for [asset filtered-assets]
                 (rum/with-key
                   (image-asset-item asset {:on-chosen on-chosen
-                                           :avatar-context avatar-context
+                                           :avatar-context effective-avatar-context
                                            :selected? (= (str (:block/uuid asset)) current-asset-uuid)})
                   (str (:block/uuid asset))))
 
@@ -2598,11 +2651,11 @@
                                            (let [image-data {:asset-uuid (str (:block/uuid asset-entity))
                                                              :asset-type (:logseq.property.asset/type asset-entity)}]
                                              (on-chosen nil
-                                                        (if avatar-context
+                                                        (if (= :avatar mode)
                                                           {:type :avatar
-                                                           :id (:id avatar-context)
-                                                           :label (:label avatar-context)
-                                                           :data (merge (:data avatar-context) image-data)}
+                                                           :id (:id synthesized-avatar-context)
+                                                           :label (:label synthesized-avatar-context)
+                                                           :data (merge (:data synthesized-avatar-context) image-data)}
                                                           {:type :image
                                                            :id (str "image-" (:block/uuid asset-entity))
                                                            :label (or (:block/title asset-entity) "")
@@ -2654,11 +2707,12 @@
    (.-target e)
    (fn [{:keys [id]}]
      (asset-picker
-      {:on-chosen (fn [_e icon-data]
+      {:on-chosen (fn [_e icon-data & [keep-popup?]]
                     (when icon-data
                       (property-handler/set-block-property!
                        page-id :logseq.property/icon icon-data))
-                    (shui/popup-hide! id))
+                    (when-not keep-popup?
+                      (shui/popup-hide! id)))
        :on-back #(shui/popup-hide! id)
        :on-delete nil
        :del-btn? false
@@ -3439,9 +3493,10 @@
     (case @*view
       :asset-picker
       ;; Level 2: Asset Picker view
-      (asset-picker {:on-chosen (fn [e icon-data]
+      (asset-picker {:on-chosen (fn [e icon-data & [keep-popup?]]
                                   ((:on-chosen opts) e icon-data)
-                                  (reset! *view :icon-picker))
+                                  (when-not keep-popup?
+                                    (reset! *view :icon-picker)))
                      :on-back #(reset! *view :icon-picker)
                      :on-delete #(on-chosen nil)
                      :del-btn? del-btn?
@@ -3541,23 +3596,13 @@
         [:div.tabs-section {:role "tablist"}
          (tab-observer @*tab {:q @*q :*result *result})
          (keyboard-nav-controller *focus-region *highlighted-index *tab *input-ref flat-items sections *virtuoso-ref)
-         (let [tabs [[:all "All"] [:emoji "Emojis"] [:icon "Icons"] [:custom "Custom"]]]
-           (for [[id label] tabs
-                 :let [active? (= @*tab id)]]
-             [:button.tab-item
-              {:key (name id)
-               :role "tab"
-               :aria-selected (str active?)
-               :tabIndex (if active? "0" "-1")
-               :data-text label
-               :data-tab-id (name id)
-               :data-active (when active? "true")
-               :on-mouse-down (fn [e]
-                                (util/stop e)
-                                (reset! *tab id)
-                                (reset! *focus-region :search)
-                                (reset! *highlighted-index nil))}
-              label]))
+         (ui/tab-items
+          {:tabs [[:all "All"] [:emoji "Emojis"] [:icon "Icons"] [:custom "Custom"]]
+           :active @*tab
+           :on-change (fn [id _e]
+                        (reset! *tab id)
+                        (reset! *focus-region :search)
+                        (reset! *highlighted-index nil))})
          [:div.tab-actions
           ;; color picker (always visible)
           (color-picker *color (fn [c]

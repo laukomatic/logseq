@@ -534,6 +534,26 @@
       {:class       (if on? (if small? "translate-x-4" "translate-x-5") "translate-x-0")
        :aria-hidden "true"}]]]))
 
+(defn tab-items
+  "Render underline-style tab buttons. Caller wraps them in `.tabs-section`
+   and supplies any siblings (observers, `.tab-actions`, etc.).
+   opts: :tabs [[id label] ...], :active id, :on-change (fn [id event])"
+  [{:keys [tabs active on-change]}]
+  (for [[id label] tabs
+        :let [active? (= active id)]]
+    [:button.tab-item
+     {:key (name id)
+      :role "tab"
+      :aria-selected (str active?)
+      :tab-index (if active? "0" "-1")
+      :data-text label
+      :data-tab-id (name id)
+      :data-active (when active? "true")
+      :on-mouse-down (fn [e]
+                       (util/stop e)
+                       (when on-change (on-change id e)))}
+     label]))
+
 (defn keyboard-shortcut-from-config [shortcut-name & {:keys [pick-first?]}]
   (let [binding (shortcut-dh/shortcut-binding shortcut-name)]
     (cond

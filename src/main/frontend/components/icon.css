@@ -45,63 +45,12 @@
     border-bottom: 1px solid var(--rx-gray-06);
   }
 
+  /* Icon-picker-specific tab bar look (gray backdrop, right-side actions slot).
+     Base .tabs-section + .tab-item rules are defined unscoped below so the
+     asset picker can reuse them. */
   .tabs-section {
-    @apply flex items-center gap-0 px-3 py-0;
-    @apply flex-shrink-0 h-auto;
     background-color: var(--lx-gray-03) !important;
     padding: 0 12px 0 0 !important;
-    border-radius: 0 !important;
-
-    .tab-actions {
-      @apply flex items-center gap-1 ml-auto;
-    }
-
-    .tab-item {
-      @apply relative px-3 py-2.5 text-sm font-medium;
-      @apply opacity-60 hover:opacity-100;
-      @apply transition-all duration-150;
-      @apply rounded-none;
-      background: transparent !important;
-      box-shadow: none !important;
-      border: none !important;
-      height: auto !important;
-      color: var(--rx-gray-11);
-
-      /* Reserve bold width to prevent layout shift on active */
-      &::before {
-        content: attr(data-text);
-        display: block;
-        font-weight: bold;
-        height: 0;
-        overflow: hidden;
-        visibility: hidden;
-      }
-
-      /* Underline for active state */
-      &[data-active="true"] {
-        @apply opacity-100 font-bold;
-        color: var(--rx-gray-12);
-
-        &::after {
-          content: "";
-          @apply absolute bottom-0 left-0 right-0;
-          @apply h-[2px];
-          background-color: var(--rx-gray-12);
-        }
-      }
-
-      /* Hover state */
-      &:hover {
-        background: transparent !important;
-      }
-
-      /* Keyboard focus state */
-      &:focus-visible {
-        outline: 2px solid var(--lx-accent-09);
-        outline-offset: -2px;
-        border-radius: 4px;
-      }
-    }
   }
 
   > .bd {
@@ -228,6 +177,65 @@
     &[data-action=del] {
       @apply !w-6 !h-6 overflow-hidden rounded-md opacity-60
       hover:text-red-rx-09 hover:opacity-90;
+    }
+  }
+}
+
+/* ── Shared tab-bar (underline-on-active). Scoped overrides above may
+   tweak the look per context. ── */
+.tabs-section {
+  @apply flex items-center gap-0 px-3 py-0;
+  @apply flex-shrink-0 h-auto;
+  border-radius: 0;
+
+  .tab-actions {
+    @apply flex items-center gap-1 ml-auto;
+  }
+
+  .tab-item {
+    @apply relative px-3 py-2.5 text-sm font-medium;
+    @apply opacity-60 hover:opacity-100;
+    @apply transition-all duration-150;
+    @apply rounded-none;
+    background: transparent !important;
+    box-shadow: none !important;
+    border: none !important;
+    height: auto !important;
+    color: var(--rx-gray-11);
+
+    /* Reserve bold width to prevent layout shift on active */
+    &::before {
+      content: attr(data-text);
+      display: block;
+      font-weight: bold;
+      height: 0;
+      overflow: hidden;
+      visibility: hidden;
+    }
+
+    /* Underline for active state */
+    &[data-active="true"] {
+      @apply opacity-100 font-bold;
+      color: var(--rx-gray-12);
+
+      &::after {
+        content: "";
+        @apply absolute bottom-0 left-0 right-0;
+        @apply h-[2px];
+        background-color: var(--rx-gray-12);
+      }
+    }
+
+    /* Hover state */
+    &:hover {
+      background: transparent !important;
+    }
+
+    /* Keyboard focus state */
+    &:focus-visible {
+      outline: 2px solid var(--lx-accent-09);
+      outline-offset: -2px;
+      border-radius: 4px;
     }
   }
 }
@@ -602,17 +610,20 @@
   @apply flex-shrink-0;
 }
 
-/* Back button row with delete button on right */
-.asset-picker-back {
-  @apply flex-shrink-0 flex items-center justify-between;
-  /* py-2 + content height matches icon-picker topbar */
-  padding-top: 8px;
-  padding-bottom: 7px;
-  /* 14px aligns chevron icon with search icon below */
-  padding-left: 14px;
-  padding-right: 14px;
+/* No min-height: the tabs-section must define row height, otherwise it gets
+   vertically centered and the active-tab underline floats above the border. */
+.asset-picker-tabrow {
+  @apply flex-shrink-0;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding: 0 14px;
   background-color: var(--lx-gray-03);
   border-bottom: 1px solid var(--rx-gray-05);
+}
+
+.asset-picker-back {
+  justify-self: start;
 
   .back-button {
     @apply flex items-center gap-0.5;
@@ -625,6 +636,19 @@
       color: var(--rx-gray-12);
     }
   }
+}
+
+.asset-picker-tabs-slot {
+  justify-self: center;
+
+  .tabs-section {
+    background: transparent;
+    padding: 0;
+  }
+}
+
+.asset-picker-trash {
+  justify-self: end;
 
   /* Delete button - matching icon picker styling */
   .ui__button[data-action=del] {
@@ -991,7 +1015,7 @@
     inset: 0;
     width: 100%;
     height: 100%;
-    object-fit: cover;
+    object-fit: contain;
     border-radius: 4px;
   }
 
@@ -1009,6 +1033,7 @@
 
     img {
       @apply rounded-full;
+      object-fit: cover;
     }
 
     .external-badge {
@@ -1120,11 +1145,12 @@
     img {
       width: 80px;
       height: 80px;
-      object-fit: cover;
+      object-fit: contain;
       border-radius: 8px;
     }
 
     &.avatar-mode img {
+      object-fit: cover;
       border-radius: 50%;
     }
   }
