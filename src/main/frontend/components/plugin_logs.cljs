@@ -157,7 +157,7 @@
              [:span.whitespace-pre-wrap.break-all.flex-1 (:message e)]]))]])))
 
 (defn open-plugin-logs!
-  [{:keys [pid name] :as opts}]
+  [{:keys [_pid _name] :as opts}]
   (shui/dialog-open!
     (fn [] (plugin-logs-panel opts))
     {:label "plugin-logs-modal"
