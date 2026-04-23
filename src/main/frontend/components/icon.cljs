@@ -1865,61 +1865,87 @@
   (rum/local nil ::images)
   (rum/local true ::loading?)
   (rum/local nil ::current-query)
+  ;; Generation counter — responses whose id no longer matches are stale
+  ;; (e.g. a "do" prefix response arriving after "donald trump" was issued)
+  ;; and must not overwrite the current images.
+  (rum/local 0 ::request-id)
   {:did-mount (fn [state]
                 (let [[{:keys [query]}] (:rum/args state)
                       *images (::images state)
                       *loading? (::loading? state)
-                      *current-query (::current-query state)]
+                      *current-query (::current-query state)
+                      *request-id (::request-id state)]
                   (when-not (string/blank? query)
                     (reset! *current-query query)
                     (reset! *loading? true)
-                    (-> (<search-web-images query)
-                        (p/then (fn [results]
-                                  (reset! *images results)
-                                  (reset! *loading? false)))
-                        (p/catch (fn [_err]
-                                   (reset! *images [])
-                                   (reset! *loading? false))))))
+                    (let [my-id (swap! *request-id inc)]
+                      (-> (<search-web-images query)
+                          (p/then (fn [results]
+                                    (when (= my-id @*request-id)
+                                      (reset! *images results)
+                                      (reset! *loading? false))))
+                          (p/catch (fn [_err]
+                                     (when (= my-id @*request-id)
+                                       (reset! *images [])
+                                       (reset! *loading? false))))))))
                 state)
    :did-update (fn [state]
                  (let [[{:keys [query]}] (:rum/args state)
                        *images (::images state)
                        *loading? (::loading? state)
                        *current-query (::current-query state)
+                       *request-id (::request-id state)
                        current-query @*current-query]
                    ;; Only refetch if query changed
                    (when (and (not= query current-query)
                               (not (string/blank? query)))
                      (reset! *current-query query)
                      (reset! *loading? true)
-                     (-> (<search-web-images query)
-                         (p/then (fn [results]
-                                   (reset! *images results)
-                                   (reset! *loading? false)))
-                         (p/catch (fn [_err]
-                                    (reset! *images [])
-                                    (reset! *loading? false))))))
+                     (let [my-id (swap! *request-id inc)]
+                       (-> (<search-web-images query)
+                           (p/then (fn [results]
+                                     (when (= my-id @*request-id)
+                                       (reset! *images results)
+                                       (reset! *loading? false))))
+                           (p/catch (fn [_err]
+                                      (when (= my-id @*request-id)
+                                        (reset! *images [])
+                                        (reset! *loading? false))))))))
                  state)}
   "Renders the web images section with loading states.
    query: search query (page title or user input)
    on-select: callback when user selects a web image
    avatar-context: if set, picker is in avatar mode
    on-popover-change: callback when confirmation popover opens/closes"
-  [state {:keys [query on-select avatar-context on-popover-change]}]
+  [state {:keys [query on-select avatar-context on-popover-change user-typing?]}]
   (let [*images (::images state)
         *loading? (::loading? state)
+        *current-query (::current-query state)
         images (rum/react *images)
         loading? (rum/react *loading?)
+        current-query (rum/react *current-query)
+        ;; `pending?` captures two transition states where skeletons should
+        ;; show even though `loading?` hasn't flipped yet:
+        ;; 1. `user-typing?` — user has typed but the 500ms debounce hasn't
+        ;;    caught up yet; no fetch has been issued.
+        ;; 2. `(not= query current-query)` — parent passed a new query but
+        ;;    `:did-update` hasn't yet set `*loading? true`.
+        pending? (or user-typing?
+                     (and (not (string/blank? query))
+                          (not= query current-query)))
+        show-loading? (or loading? pending?)
         avatar-mode? (some? avatar-context)
         skip-confirm? (get-web-image-skip-confirm)
         web-expanded? (get (rum/react *section-states) "Web images" true)]
-    ;; Don't render section if no query or empty results after loading
-    (when-not (and (not loading?) (empty? images) (not (string/blank? query)))
+    ;; Hide only when a settled fetch returned no results. During any
+    ;; transition (loading? or pending?) we keep the section mounted and
+    ;; show skeletons so the layout below doesn't jump.
+    (when-not (and (not show-loading?) (empty? images))
       [:div.pane-section.web-images-section
        ;; Section header with info icon
        [:div.section-header-row
         (section-header {:title "Web images"
-                         :count (when-not loading? (count images))
+                         :count (when-not show-loading? (count images))
                          :expanded? web-expanded?
                          :on-toggle #(swap! *section-states update "Web images" (fn [v] (if (nil? v) false (not v))))})
         (shui/tooltip-provider
@@ -1937,10 +1963,12 @@
        (when web-expanded?
          [:div.asset-picker-grid.web-images-row
           {:class (when avatar-mode? "avatar-mode")}
-          (if loading?
-            ;; Loading skeletons
+          (if show-loading?
+            ;; Loading skeletons — inherit avatar-mode so they render as circles
             (for [i (range 5)]
-              [:div.web-image-placeholder {:key (str "skeleton-" i)}
+              [:div.web-image-placeholder
+               {:key (str "skeleton-" i)
+                :class (when avatar-mode? "avatar-mode")}
                (shui/skeleton {:class "w-full h-full rounded"})])
             ;; Actual images
             (for [web-image images]
@@ -2499,6 +2527,11 @@
         (when-not (string/blank? effective-web-query)
           (web-images-section
            {:query effective-web-query
+            ;; True on the first keystroke, before the 500ms debounce has
+            ;; caught web-query up to search-q. Lets the child switch to
+            ;; skeletons immediately instead of waiting for the debounce.
+            :user-typing? (and (not (string/blank? search-q))
+                               (not= search-q web-query))
             :avatar-context avatar-context
             :on-select handle-web-image-select
             :on-popover-change #(reset! *popover-open? %)}))

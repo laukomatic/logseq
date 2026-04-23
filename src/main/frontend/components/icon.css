@@ -1033,16 +1033,25 @@
 }
 
 /* Web image placeholder (loading skeleton) */
+/* Mirrors `.web-image-item` geometry (border + aspect ratio) so the
+   skeleton circle lands in the exact same spot as the loaded image — no
+   vertical jump when results come in. */
 .web-image-placeholder {
   position: relative;
   width: 100%;
   padding-bottom: 100%; /* Square aspect ratio */
+  border: 2px solid transparent;
   border-radius: 6px;
   overflow: hidden;
 
   > * {
     position: absolute;
     inset: 0;
+  }
+
+  &.avatar-mode,
+  &.avatar-mode > * {
+    border-radius: 50%;
   }
 }
 
