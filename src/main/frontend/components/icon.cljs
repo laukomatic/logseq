@@ -3291,7 +3291,7 @@
                           (persist!))}
              (shui/tabler-icon (str "align-" align) {:size 16}))))]]]]]))
 
-(rum/defcs ^:large-vars/cleanup-todo icon-search < rum/reactive
+(rum/defcs ^:large-vars/cleanup-todo icon-search < rum/reactive db-mixins/query
   (rum/local "" ::q)
   (rum/local nil ::result)
   (rum/local :search ::focus-region)
@@ -3320,6 +3320,15 @@
         *result-ref (rum/create-ref)
         *virtuoso-ref (::virtuoso-ref state)
         result @*result
+        ;; When the picker is opened against an entity, derive del-btn? reactively
+        ;; from the live entity. The static del-btn? prop is captured in the popup
+        ;; closure and goes stale across keep-popup? flows (e.g. picking a color
+        ;; on an inherited icon, which writes the icon to the entity for the first
+        ;; time). Treat the :none sentinel (set on delete) as "no icon".
+        del-btn? (if preview-target-db-id
+                   (let [icon (some-> (model/sub-block preview-target-db-id) :logseq.property/icon)]
+                     (and icon (not= (:type icon) :none)))
+                   del-btn?)
         normalized-icon-value (normalize-icon icon-value)
         opts (assoc opts
                     :input-focused? @*input-focused?

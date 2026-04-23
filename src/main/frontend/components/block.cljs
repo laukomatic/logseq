@@ -3218,7 +3218,7 @@
                                                                       (:db/id block)
                                                                       :logseq.property/icon
                                                                       {:type :none})))
-                                                      :del-btn? (boolean icon')
+                                                      :del-btn? (boolean (and icon' (not= (:type icon') :none)))
                                                       :page-title (:block/title block)
                                                       :preview-target-db-id (:db/id block)
                                                       :button-opts (when (:page-title? config)
