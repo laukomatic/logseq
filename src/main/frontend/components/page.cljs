@@ -7,6 +7,7 @@
             [frontend.components.content :as content]
             [frontend.components.db-based.page :as db-page]
             [frontend.components.editor :as editor]
+            [frontend.components.icon :as icon-component]
             [frontend.components.library :as library]
             [frontend.components.objects :as objects]
             [frontend.components.plugins :as plugins]
@@ -236,7 +237,11 @@
   [:div.ls-page-title-actions
    [:div.flex.flex-row.items-center.gap-2
     (when (let [icon (:logseq.property/icon (db/entity (:db/id page)))]
-            (or (nil? icon) (= (:type icon) :none)))
+            (or (nil? icon)
+                (= (:type icon) :none)
+                ;; Recovery path: icon is stored but can't resolve to a visible
+                ;; element (e.g. legacy data from a now-filtered picker entry).
+                (not (icon-component/renderable-icon? icon))))
       (shui/button
        {:variant :ghost
         :size :sm

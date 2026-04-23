@@ -655,6 +655,26 @@
 
     :else nil))
 
+(defn renderable-icon?
+  "True when icon-value would produce a visible element via `icon`. For :icon type
+   this includes verifying that the underlying Tabler component actually exists,
+   which catches stored values whose :id no longer resolves (e.g. data saved from a
+   stale picker entry before the tabler-icons filter was added)."
+  [icon-value]
+  (boolean
+   (when-let [normalized (normalize-icon icon-value)]
+     (case (:type normalized)
+       :none false
+       :emoji (not (string/blank? (get-in normalized [:data :value])))
+       :icon (when-let [v (get-in normalized [:data :value])]
+               (and (exists? js/tablerIcons)
+                    (some? (gobj/get js/tablerIcons (str "Icon" (csk/->PascalCase v))))))
+       :text (not (string/blank? (get-in normalized [:data :value])))
+       :avatar (or (some? (get-in normalized [:data :asset-uuid]))
+                   (not (string/blank? (get-in normalized [:data :value]))))
+       :image (some? (get-in normalized [:data :asset-uuid]))
+       false))))
+
 (defn get-image-assets
   "Get image assets from frontend Datascript (fast, but may be empty on cold start)"
   []
@@ -1363,16 +1383,19 @@
 
 (defn get-used-items
   []
-  (let [v2-items (storage/get :ui/ls-icons-used-v2)]
-    (if (seq v2-items)
-      v2-items
-      ;; Migrate from legacy format
-      (let [legacy-items (storage/get :ui/ls-icons-used)]
-        (if (seq legacy-items)
-          (let [normalized (map normalize-icon legacy-items)]
-            (storage/set :ui/ls-icons-used-v2 normalized)
-            normalized)
-          [])))))
+  (let [v2-items (storage/get :ui/ls-icons-used-v2)
+        items (if (seq v2-items)
+                v2-items
+                ;; Migrate from legacy format
+                (let [legacy-items (storage/get :ui/ls-icons-used)]
+                  (if (seq legacy-items)
+                    (let [normalized (map normalize-icon legacy-items)]
+                      (storage/set :ui/ls-icons-used-v2 normalized)
+                      normalized)
+                    [])))]
+    ;; Drop entries that no longer resolve (e.g. residue from the phantom
+    ;; tabler-icons-react utility exports that used to appear in search).
+    (filter renderable-icon? items)))
 
 (defn add-used-item!
   [m]
