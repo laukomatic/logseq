@@ -816,12 +816,27 @@
   }
 }
 
-/* Zero-state action rows - shown when no assets exist, in place of grid */
+/* Zero-state action rows - shown when no assets exist, in place of grid.
+   Rows span full picker width so hover highlights reach the edges. The
+   ancestor padding (.pane-section px-2 and .asset-picker-grid p-3 + 56px
+   bottom) is cancelled via :has() selectors below — we drop the padding on
+   those ancestors specifically when they contain this empty-actions block. */
 .asset-picker-empty-actions {
   grid-column: 1 / -1;
   display: flex;
   flex-direction: column;
   padding: 4px 0;
+}
+
+/* Cancel the grid's own padding when its only child is the empty-actions block. */
+.asset-picker-grid:has(> .asset-picker-empty-actions) {
+  padding: 0;
+}
+
+/* Cancel the pane-section's horizontal padding when it holds an empty-actions grid. */
+.pane-section:has(.asset-picker-empty-actions) {
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .asset-picker-empty-row {

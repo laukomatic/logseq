@@ -2856,6 +2856,9 @@
         (fn self
           ([] (self nil))
           ([^js event]
+           ;; Trigger the shortcut-badge press animation (echoes the keystroke
+           ;; for ⌘V pastes, provides visual feedback for button clicks too).
+           (shui/shortcut-press! "mod+v")
            (-> (p/let [result (<read-clipboard-image event)]
                  (case (:kind result)
                    :image
@@ -3057,6 +3060,17 @@
                  [:span.text-sm "No matching images"]]
                 ;; No assets uploaded yet — show action rows instead of a placeholder
                 [:div.asset-picker-empty-actions
+                 (when clipboard-supported?
+                   [:button.asset-picker-empty-row
+                    {:type "button"
+                     :on-click (fn [_] (handle-clipboard-paste))}
+                    [:div.row-icon (shui/tabler-icon "clipboard" {:size 22})]
+                    [:div.row-body
+                     [:div.row-title "Paste from clipboard"]
+                     [:div.row-subtitle "An image, or a link to one"]]
+                    [:div.row-shortcut
+                     (shui/shortcut "mod+v" {:style :combo})]])
+
                  [:label.asset-picker-empty-row
                   {:for "asset-upload-input"
                    :role "button"
@@ -3065,30 +3079,11 @@
                                   (when (or (= "Enter" (.-key e)) (= " " (.-key e)))
                                     (.preventDefault e)
                                     (trigger-upload!)))}
-                  [:div.row-icon (shui/tabler-icon "upload" {:size 22})]
+                  [:div.row-icon (shui/tabler-icon "folder" {:size 22})]
                   [:div.row-body
-                   [:div.row-title "Upload from computer"]
-                   [:div.row-subtitle "Choose a file or drag it here"]]
-                  [:div.row-chevron (shui/tabler-icon "chevron-right" {:size 16})]]
-
-                 [:button.asset-picker-empty-row
-                  {:type "button"
-                   :on-click (fn [^js e] (open-url-pane! e))}
-                  [:div.row-icon (shui/tabler-icon "link" {:size 22})]
-                  [:div.row-body
-                   [:div.row-title "Paste image URL"]
-                   [:div.row-subtitle "Link to an image on the web"]]
-                  [:div.row-chevron (shui/tabler-icon "chevron-right" {:size 16})]]
-
-                 (when clipboard-supported?
-                   [:button.asset-picker-empty-row.no-subtitle
-                    {:type "button"
-                     :on-click (fn [_] (handle-clipboard-paste))}
-                    [:div.row-icon (shui/tabler-icon "clipboard" {:size 22})]
-                    [:div.row-body
-                     [:div.row-title "Paste from clipboard"]]
-                    [:div.row-shortcut
-                     (shui/shortcut "mod+v" {:style :compact})]])]))])]])
+                   [:div.row-title "Add from your computer"]
+                   [:div.row-subtitle "Browse or drop a file in"]]
+                  [:div.row-chevron (shui/tabler-icon "chevron-right" {:size 16})]]]))])]])
 
      ;; Hidden file input lives at the top level so both the floating Upload
      ;; button and the empty-state "Upload from computer" row reference it via
