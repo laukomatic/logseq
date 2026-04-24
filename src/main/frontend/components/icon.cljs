@@ -791,28 +791,147 @@
     (catch :default _
       (date/get-date-time-string-2))))
 
-(defn- <validate-url-asset
-  "Validate URL by making a HEAD request. Returns promise with {:content-type :size} or rejects."
-  [url]
-  (p/create
-   (fn [resolve reject]
-     (-> (js/fetch url #js {:method "HEAD"
-                            :mode "cors"
-                            :credentials "omit"})
-         (.then (fn [^js response]
-                  (if (.-ok response)
-                    (let [content-type (.get (.-headers response) "content-type")
-                          content-length (.get (.-headers response) "content-length")
-                          size (when content-length (js/parseInt content-length 10))]
-                      (resolve {:content-type content-type
-                                :size size
-                                :url url}))
-                    (reject (ex-info "Failed to fetch URL" {:status (.-status response)})))))
-         (.catch (fn [err]
-                   (reject (ex-info "Network error" {:error (.-message err)}))))))))
+(defn- sniff-image-content-type
+  "Detect image MIME type from the first bytes of an ArrayBuffer.
+   Returns {:content-type String :kind :image|:html|:unknown :ext String?}.
+   content-type is a string suitable for valid-image-content-type? and
+   content-type->extension. :kind :html distinguishes HTML pages from
+   unknown binary blobs so callers can surface a dedicated error."
+  [^js array-buffer]
+  (let [bytes     (js/Uint8Array. array-buffer)
+        len       (.-length bytes)
+        b         (fn [i] (when (< i len) (aget bytes i)))
+        starts?   (fn [prefix]
+                    (and (>= len (count prefix))
+                         (every? (fn [[i v]] (= v (b i)))
+                                 (map-indexed vector prefix))))
+        text-head (when (pos? len)
+                    (let [n       (min len 200)
+                          ta      (js/Uint8Array. array-buffer 0 n)
+                          decoder (js/TextDecoder. "utf-8" #js {:fatal false})]
+                      (string/lower-case (.decode decoder ta))))
+        trimmed   (some-> text-head string/triml)
+        html?     (fn []
+                    (and text-head
+                         (or (re-find #"<!doctype\s+html" text-head)
+                             (re-find #"<html[\s>]" text-head)
+                             (re-find #"<head[\s>]" text-head)
+                             (re-find #"<body[\s>]" text-head)
+                             (string/starts-with? trimmed "<!--"))))
+        svg?      (fn []
+                    (and text-head
+                         (or (re-find #"<\?xml" text-head)
+                             (re-find #"<svg[\s>]" text-head))))]
+    (cond
+      (starts? [0x89 0x50 0x4E 0x47 0x0D 0x0A 0x1A 0x0A])
+      {:content-type "image/png" :kind :image :ext "png"}
 
-(defn- <download-url-asset
-  "Download image from URL. Returns promise with {:data (ArrayBuffer) :content-type :size}."
+      (starts? [0xFF 0xD8 0xFF])
+      {:content-type "image/jpeg" :kind :image :ext "jpg"}
+
+      (or (starts? [0x47 0x49 0x46 0x38 0x37 0x61])
+          (starts? [0x47 0x49 0x46 0x38 0x39 0x61]))
+      {:content-type "image/gif" :kind :image :ext "gif"}
+
+      (and (starts? [0x52 0x49 0x46 0x46])
+           (= 0x57 (b 8)) (= 0x45 (b 9)) (= 0x42 (b 10)) (= 0x50 (b 11)))
+      {:content-type "image/webp" :kind :image :ext "webp"}
+
+      (starts? [0x42 0x4D])
+      {:content-type "image/bmp" :kind :image :ext "bmp"}
+
+      (and (= 0x66 (b 4)) (= 0x74 (b 5)) (= 0x79 (b 6)) (= 0x70 (b 7))
+           (contains? #{"heic" "heix" "hevc" "hevx" "heim" "heis" "mif1" "msf1"}
+                      (str (char (or (b 8) 0)) (char (or (b 9) 0))
+                           (char (or (b 10) 0)) (char (or (b 11) 0)))))
+      {:content-type "image/heic" :kind :image :ext "heic"}
+
+      (svg?)  {:content-type "image/svg+xml" :kind :image :ext "svg"}
+      (html?) {:content-type "text/html" :kind :html}
+      :else   {:content-type nil :kind :unknown})))
+
+(defn- read-from-event
+  "Synchronously extract an image file or text URL from a ClipboardEvent.
+   Returns a promise of {:kind :image :file File} | {:kind :url :url String} | nil.
+   Note: the promise may resolve synchronously for image-file events."
+  [^js event]
+  (if (nil? event)
+    (p/resolved nil)
+    (let [cd (some-> event .-clipboardData)]
+      (if (nil? cd)
+        (p/resolved nil)
+        (let [files (.-files cd)
+              items (.-items cd)]
+          (cond
+            (and files (pos? (.-length files)))
+            (if-let [f (aget files 0)]
+              (p/resolved {:kind :image :file f})
+              (p/resolved nil))
+
+            :else
+            (let [n (if items (.-length items) 0)
+                  indices (range n)
+                  file-item (some (fn [i]
+                                    (let [it (aget items i)]
+                                      (when (and it (= "file" (.-kind it)))
+                                        (when-let [f (.getAsFile it)]
+                                          {:file f}))))
+                                  indices)]
+              (if file-item
+                (p/resolved {:kind :image :file (:file file-item)})
+                (let [text-item (some (fn [i]
+                                        (let [it (aget items i)]
+                                          (when (and it
+                                                     (= "string" (.-kind it))
+                                                     (= "text/plain" (.-type it)))
+                                            it)))
+                                      indices)]
+                  (if text-item
+                    (-> (p/create
+                         (fn [resolve _reject]
+                           (.getAsString ^js text-item
+                                         (fn [s] (resolve s)))))
+                        (p/then (fn [s]
+                                  (let [trimmed (some-> s string/trim)]
+                                    (if (and trimmed
+                                             (re-matches #"^https?://\S+$" trimmed))
+                                      {:kind :url :url trimmed}
+                                      nil)))))
+                    (p/resolved nil)))))))))))
+
+(declare <download-url-asset-via-ipc)
+
+(defn- <validate-url-asset
+  "Validate URL. Returns promise with {:content-type :size :url} or rejects."
+  [url]
+  (if (util/electron?)
+    ;; Electron: we can't get just headers via :httpRequest, so do a full GET
+    ;; (cached by the renderer anyway) and synthesize from sniff results.
+    (-> (<download-url-asset-via-ipc url)
+        (p/then (fn [{:keys [content-type size]}]
+                  {:content-type content-type :size size :url url})))
+    ;; Browser: keep current HEAD implementation.
+    (p/create
+     (fn [resolve reject]
+       (-> (js/fetch url #js {:method "HEAD"
+                              :mode "cors"
+                              :credentials "omit"})
+           (.then (fn [^js response]
+                    (if (.-ok response)
+                      (let [content-type (.get (.-headers response) "content-type")
+                            content-length (.get (.-headers response) "content-length")
+                            size (when content-length (js/parseInt content-length 10))]
+                        (resolve {:content-type content-type
+                                  :size size
+                                  :url url}))
+                      (reject (ex-info "Failed to fetch URL"
+                                       {:kind :http :status (.-status response)})))))
+           (.catch (fn [err]
+                     (reject (ex-info "Network error"
+                                      {:kind :network :error (.-message err)})))))))))
+
+(defn- <download-url-asset-via-fetch
+  "Browser path: uses js/fetch. Subject to CORS."
   [url]
   (p/create
    (fn [resolve reject]
@@ -826,10 +945,91 @@
                           (.then (fn [buffer]
                                    (resolve {:data buffer
                                              :content-type content-type
-                                             :size (.-byteLength buffer)})))))
-                    (reject (ex-info "Failed to download" {:status (.-status response)})))))
-         (.catch (fn [err]
-                   (reject (ex-info "Network error" {:error (.-message err)}))))))))
+                                             :size (.-byteLength buffer)
+                                             :kind :image})))))
+                    (reject (ex-info "Failed to download"
+                                     {:kind :http-status :status (.-status response) :url url})))))
+         (.catch (fn [^js err]
+                   (js/console.error "Download via fetch failed for" url err)
+                   ;; In a browser build, TypeError from a CORS-mode fetch almost always
+                   ;; means the target blocked cross-origin access. We can't distinguish
+                   ;; true network failures from CORS rejections here — the browser
+                   ;; deliberately obscures it for security. Treat as :cors in the browser.
+                   (let [cors? (instance? js/TypeError err)]
+                     (reject (ex-info (if cors? "Cross-origin blocked" "Network error")
+                                      {:kind (if cors? :cors :network)
+                                       :error (some-> err .-message)
+                                       :url url})))))))))
+
+(defn- <download-url-asset-via-ipc
+  "Electron path: uses main-process IPC (node-fetch, no CORS).
+   Consumes structured {:status :ok :headers :data} response; classifies
+   failures by HTTP status and content. Sniffs magic bytes to distinguish
+   HTML challenge pages from real images when headers are unreliable."
+  [url]
+  (-> (ipc/ipc :httpRequest (str (random-uuid))
+               #js {:url url
+                    :method "GET"
+                    :returnType "arraybuffer"
+                    :structured true})
+      (p/then (fn [^js response]
+                (let [status (.-status response)
+                      headers (.-headers response)
+                      header-content-type (some-> headers (gobj/get "content-type"))
+                      data (.-data response)
+                      byte-length (if (and data (.-byteLength data))
+                                    (.-byteLength data) 0)]
+                  (cond
+                    (not (<= 200 status 299))
+                    (throw (ex-info "HTTP error"
+                                    {:kind :http-status
+                                     :status status
+                                     :content-type header-content-type
+                                     :url url}))
+
+                    (zero? byte-length)
+                    (throw (ex-info "Empty response"
+                                    {:kind :empty
+                                     :status status
+                                     :url url}))
+
+                    :else
+                    (let [sniffed (sniff-image-content-type data)
+                          sniff-kind (:kind sniffed)
+                          ;; Bytes are authoritative; header is fallback.
+                          final-kind (cond
+                                       (= :image sniff-kind) :image
+                                       (= :html sniff-kind) :html
+                                       (and header-content-type
+                                            (string/starts-with?
+                                             header-content-type "text/html")) :html
+                                       (and header-content-type
+                                            (string/starts-with?
+                                             header-content-type "image/")) :image
+                                       :else :unknown)
+                          final-content-type (or (:content-type sniffed)
+                                                 header-content-type)]
+                      {:data data
+                       :content-type final-content-type
+                       :size byte-length
+                       :kind final-kind
+                       :status status})))))
+      (p/catch (fn [^js err]
+                 (js/console.error "Download via IPC failed for" url err)
+                 (if (ex-data err)
+                   (throw err)
+                   (throw (ex-info "Network error"
+                                   {:kind :network
+                                    :error (some-> err .-message)
+                                    :url url})))))))
+
+(defn- <download-url-asset
+  "Download image from URL. Returns promise with {:data (ArrayBuffer) :content-type :size :kind}.
+   :kind is :image (ok), :html (page, not image), or :unknown (binary, non-image)."
+  [url]
+  (if (util/electron?)
+    (<download-url-asset-via-ipc url)
+    (<download-url-asset-via-fetch url)))
 
 ;; ============================================================================
 ;; Asset Saving
@@ -890,13 +1090,20 @@
 (defn <save-url-asset!
   "Download image from URL and save as asset. Returns promise with asset entity."
   [repo url asset-name]
-  (p/let [{:keys [data content-type size]} (<download-url-asset url)]
-    ;; Validate content-type
-    (when-not (valid-image-content-type? content-type)
-      (throw (ex-info "Not an image" {:content-type content-type})))
-    ;; Validate size
-    (when (> size max-url-asset-size)
-      (throw (ex-info "File too large" {:size size :max max-url-asset-size})))
+  (p/let [{:keys [data content-type size kind]} (<download-url-asset url)]
+    ;; Validate kind / content-type
+    (cond
+      (= :html kind)
+      (throw (ex-info "URL is a webpage" {:kind :html-page :content-type content-type}))
+
+      (= :unknown kind)
+      (throw (ex-info "Unknown content type" {:kind :unknown :content-type content-type}))
+
+      (not (valid-image-content-type? content-type))
+      (throw (ex-info "Not an image" {:kind :not-image :content-type content-type}))
+
+      (and size (> size max-url-asset-size))
+      (throw (ex-info "File too large" {:kind :too-large :size size :max max-url-asset-size})))
     ;; Create a File object from the ArrayBuffer
     (let [ext (or (content-type->extension content-type) "png")
           filename (str asset-name "." ext)
@@ -2008,6 +2215,48 @@
 ;; URL Asset Pane (Popover content for "Add asset via URL")
 ;; ============================================================================
 
+(defn- url-save-error-copy
+  "Map an ex-info thrown by the URL-save path to user-facing copy."
+  [^js err]
+  (let [data (ex-data err)
+        kind (:kind data)]
+    (case kind
+      :html-page
+      "That link is a webpage, not an image. Right-click the image itself and copy image address."
+
+      :not-image
+      (str "That URL isn't an image"
+           (when-let [ct (:content-type data)] (str " (" ct ")"))
+           ". Try a direct image link.")
+
+      :too-large
+      (str "Image exceeds " (/ (:max data) 1024 1024) "MB size limit.")
+
+      :unknown
+      "Couldn't tell what that URL is. Try saving the image and uploading directly."
+
+      :http-status
+      (let [status (:status data)]
+        (case status
+          401 "That image requires sign-in. Save it locally and upload instead."
+          402 "That page is paywalled. Save the image to your computer first."
+          403 "That site refused the download. Save the image locally and upload."
+          404 "That URL doesn't exist anymore."
+          429 "Too many requests to that site. Try again in a moment."
+          (str "Server returned " status ". Save the image manually and upload.")))
+
+      :empty
+      "The server closed the connection without sending data. Try again in a moment."
+
+      :cors
+      "Your browser blocked that URL (cross-origin). Try the desktop app for broader URL support, or save the image and upload it directly."
+
+      :network
+      "Couldn't reach that URL. Check your connection, or the site may be offline."
+
+      ;; Default — preserve ex-message for unclassified errors
+      (or (ex-message err) "Failed to download image."))))
+
 (rum/defcs url-asset-pane < rum/reactive
   (rum/local "" ::url)
   (rum/local "" ::name)
@@ -2051,11 +2300,7 @@
                               ;; Auto-extract filename if empty
                               (when (string/blank? @*name)
                                 (reset! *name (extract-filename-from-url url)))))))
-                (p/catch (fn [err]
-                           (let [msg (or (ex-message err) "Failed to validate URL")]
-                             (if (string/includes? msg "Network")
-                               (reset! *error "This website doesn't allow direct downloads. Try using a direct image URL (e.g., ending in .png or .jpg)")
-                               (reset! *error msg)))))
+                (p/catch (fn [err] (reset! *error (url-save-error-copy err))))
                 (p/finally #(reset! *loading? false)))))
 
         ;; Save handler
@@ -2070,23 +2315,9 @@
                             (on-asset-added asset-entity))
                           (on-close)))
                 (p/catch (fn [err]
-                           (let [msg (ex-message err)]
-                             (cond
-                               (string/includes? (str msg) "Not an image")
-                               (reset! *error "URL does not point to a valid image")
-
-                               (string/includes? (str msg) "too large")
-                               (reset! *error "Image exceeds 10MB size limit")
-
-                               (string/includes? (str msg) "Network")
-                               (do
-                                 (reset! *error nil)
-                                 (shui/toast! "Download blocked. Try using a direct image URL" :error))
-
-                               :else
-                               (do
-                                 (reset! *error nil)
-                                 (shui/toast! (str "Failed to download: " msg) :error))))))
+                           (let [copy (url-save-error-copy err)]
+                             (reset! *error nil)
+                             (shui/toast! copy :error))))
                 (p/finally #(reset! *loading? false)))))]
 
     [:div.url-asset-pane
@@ -2180,6 +2411,62 @@
 ;; Asset Picker
 ;; ============================================================================
 
+(defn- <read-from-async-api
+  "Async read from the system clipboard via navigator.clipboard.read().
+   Returns a promise resolving to:
+   {:kind :image :file File}
+   {:kind :url   :url   \"https://...\"}
+   {:kind :none}
+   {:kind :error :error err}"
+  []
+  (if (and js/navigator (.-clipboard js/navigator) (.-read (.-clipboard js/navigator)))
+    (-> (p/let [items (.read (.-clipboard js/navigator))
+                items-arr (js->clj items)
+                first-item (first items-arr)]
+          (if (nil? first-item)
+            {:kind :none}
+            (p/let [types (js->clj (.-types ^js first-item))
+                    image-type (some #(when (string/starts-with? % "image/") %) types)]
+              (cond
+                image-type
+                (p/let [blob (.getType ^js first-item image-type)
+                        ext (last (string/split image-type #"/"))
+                        filename (str "clipboard-" (.now js/Date) "." ext)
+                        file (js/File. #js [blob] filename #js {:type image-type})]
+                  {:kind :image :file file})
+
+                (some #(= % "text/plain") types)
+                (p/let [blob (.getType ^js first-item "text/plain")
+                        text (.text blob)
+                        trimmed (when text (string/trim text))]
+                  (if (and trimmed (re-matches #"^https?://\S+$" trimmed))
+                    {:kind :url :url trimmed}
+                    {:kind :none}))
+
+                :else
+                {:kind :none}))))
+        (p/catch (fn [err] {:kind :error :error err})))
+    (p/resolved {:kind :error :error (js/Error. "Clipboard API not available")})))
+
+(defn- <read-clipboard-image
+  "Read an image or URL from the clipboard.
+   If `event` is provided, prefer its synchronous clipboardData (covers Finder
+   file pastes, which the Async Clipboard API cannot see). Falls back to
+   navigator.clipboard.read() otherwise.
+   Returns promise of:
+     {:kind :image :file File}
+     {:kind :url   :url String}
+     {:kind :none}
+     {:kind :error :error js/Error}"
+  ([] (<read-clipboard-image nil))
+  ([^js event]
+   (-> (read-from-event event)
+       (p/then (fn [result]
+                 (if (some? result)
+                   result
+                   ;; Fall back to async API.
+                   (<read-from-async-api)))))))
+
 (rum/defcs asset-picker < rum/reactive db-mixins/query
   (rum/local "" ::search-q)
   (rum/local true ::loading?) ;; Start with loading state
@@ -2187,6 +2474,7 @@
   (rum/local nil ::web-query-debounced) ;; Debounced web search query
   (rum/local false ::popover-open?) ;; Track if any popover is open
   (rum/local :avatar ::mode) ;; :avatar | :image — live tab state, seeded in :will-mount
+  (rum/local nil ::paste-handler) ;; Holds latest clipboard-paste closure for the DOM listener
   ;; Create a single stable debounced setter. Must live in state (not the
    ;; render `let`) so the debounce timer persists across renders — otherwise
    ;; every keystroke gets a fresh timer and no debouncing happens, causing
@@ -2231,8 +2519,35 @@
                                  (when @*asset-picker-open?
                                    (reset! *loading? false))))))
 
-                state)
+                ;; Attach a paste listener to the picker root so ⌘V anywhere in
+                ;; the modal routes through the render-time clipboard handler.
+                (let [node (rum/dom-node state)
+                      listener (fn [^js e]
+                                 (let [target (.-target e)
+                                       tag (some-> target .-tagName string/lower-case)
+                                       in-input? (contains? #{"input" "textarea"} tag)
+                                       clipboard-data (.-clipboardData e)
+                                       items (some-> clipboard-data .-items)
+                                       has-image? (when items
+                                                    (some (fn [i]
+                                                            (let [it (aget items i)]
+                                                              (and it
+                                                                   (some-> it .-type
+                                                                           (string/starts-with? "image/")))))
+                                                          (range (.-length items))))]
+                                   (when (or has-image? (not in-input?))
+                                     (.preventDefault e)
+                                     (when-let [h @(::paste-handler state)]
+                                       (h e)))))]
+                  (.addEventListener node "paste" listener)
+                  (assoc state ::paste-listener listener)))
    :will-unmount (fn [state]
+                   ;; Remove paste listener first (best-effort — node may be gone)
+                   (when-let [listener (::paste-listener state)]
+                     (try
+                       (when-let [node (rum/dom-node state)]
+                         (.removeEventListener node "paste" listener))
+                       (catch :default _ nil)))
                    ;; Track picker closed state
                    (reset! *asset-picker-open? false)
 
@@ -2351,7 +2666,7 @@
                                             :label (or (:block/title asset-entity) "")
                                             :data image-data}))))))
                 (p/catch (fn [err]
-                           (shui/toast! (str "Failed to save image: " (ex-message err)) :error))))))
+                           (shui/toast! (url-save-error-copy err) :error))))))
         ;; Process upload (actual upload logic extracted for reuse)
         process-upload (fn [files]
                          (let [repo (state/get-current-repo)
@@ -2451,7 +2766,89 @@
                              {:align :center
                               :content-props {:class "w-96"}})
                             ;; Auto-upload for 1-3 files
-                            (process-upload files))))]
+                            (process-upload files))))
+
+        ;; Feature detection for Async Clipboard API.
+        clipboard-supported?
+        (boolean (some-> js/navigator .-clipboard .-read))
+
+        ;; Click the hidden <input type=file> to open the native file picker.
+        trigger-upload!
+        (fn []
+          (when-let [input (js/document.getElementById "asset-upload-input")]
+            (.click input)))
+
+        ;; Shared "asset added via URL" side-effect: refresh list + apply icon.
+        ;; Used by both the URL pane popup and the clipboard :url branch.
+        on-url-asset-entity-added
+        (fn [asset-entity]
+          ;; Refresh asset list
+          (p/let [updated-assets (<get-image-assets)]
+            (reset! *loaded-assets (or (seq updated-assets) [])))
+          ;; Select the new asset
+          (let [image-data {:asset-uuid (str (:block/uuid asset-entity))
+                            :asset-type (:logseq.property.asset/type asset-entity)}]
+            (on-chosen nil
+                       (if (= :avatar mode)
+                         {:type :avatar
+                          :id (:id synthesized-avatar-context)
+                          :label (:label synthesized-avatar-context)
+                          :data (merge (:data synthesized-avatar-context) image-data)}
+                         {:type :image
+                          :id (str "image-" (:block/uuid asset-entity))
+                          :label (or (:block/title asset-entity) "")
+                          :data image-data}))))
+
+        ;; Open the URL-paste popover anchored to the clicked element.
+        open-url-pane!
+        (fn [^js e]
+          (reset! *popover-open? true)
+          (shui/popup-show!
+           (.-target e)
+           (fn [{:keys [id]}]
+             (url-asset-pane
+              {:on-close (fn []
+                           (reset! *popover-open? false)
+                           (shui/popup-hide! id))
+               :on-asset-added on-url-asset-entity-added}))
+           {:align :end
+            :side "top"
+            :content-props {:class "url-asset-pane-popup"
+                            :sideOffset 8}
+            :on-after-hide (fn [] (reset! *popover-open? false))}))
+
+        ;; Read the system clipboard and route to upload / URL-save / toast.
+        handle-clipboard-paste
+        (fn self
+          ([] (self nil))
+          ([^js event]
+           (-> (p/let [result (<read-clipboard-image event)]
+                 (case (:kind result)
+                   :image
+                   (handle-upload [(:file result)])
+
+                   :url
+                   (let [repo (state/get-current-repo)
+                         url (:url result)
+                         asset-name (str "clipboard-" (.now js/Date))]
+                     (-> (<save-url-asset! repo url asset-name)
+                         (p/then (fn [asset-entity]
+                                   (when asset-entity
+                                     (on-url-asset-entity-added asset-entity))))
+                         (p/catch (fn [err]
+                                    (shui/toast! (url-save-error-copy err) :error)))))
+
+                   :none
+                   (shui/toast! "No image or URL found in clipboard" :warning)
+
+                   :error
+                   (shui/toast! "Couldn't read clipboard. Try Upload or Paste URL." :warning)))
+               (p/catch (fn [err]
+                          (js/console.error "clipboard paste failed" err)
+                          (shui/toast! (url-save-error-copy err) :error))))))
+
+        ;; Keep the DOM paste listener pointed at the freshest closure.
+        _ (reset! (::paste-handler state) handle-clipboard-paste)]
     [:div.asset-picker
      {:id "asset-picker-modal"
       :class [(when avatar-mode? "avatar-mode")
@@ -2624,80 +3021,87 @@
                 [:div.asset-picker-empty
                  (shui/tabler-icon "search-off" {:size 32})
                  [:span.text-sm "No matching images"]]
-                ;; No assets uploaded yet
-                [:div.asset-picker-empty
-                 (shui/tabler-icon "photo" {:size 32})
-                 [:span.text-sm "No images yet"]]))])]])
+                ;; No assets uploaded yet — show action rows instead of a placeholder
+                [:div.asset-picker-empty-actions
+                 [:label.asset-picker-empty-row
+                  {:for "asset-upload-input"
+                   :role "button"
+                   :tab-index 0
+                   :on-key-down (fn [^js e]
+                                  (when (or (= "Enter" (.-key e)) (= " " (.-key e)))
+                                    (.preventDefault e)
+                                    (trigger-upload!)))}
+                  [:div.row-icon (shui/tabler-icon "upload" {:size 22})]
+                  [:div.row-body
+                   [:div.row-title "Upload from computer"]
+                   [:div.row-subtitle "Choose a file or drag it here"]]
+                  [:div.row-chevron (shui/tabler-icon "chevron-right" {:size 16})]]
 
-     ;; Action buttons (floating at bottom) - using shui buttons
-     [:div.asset-picker-actions
-      (shui/button
-       {:variant :outline
-        :size :sm
-        :on-click (fn [^js e]
-                    (reset! *popover-open? true)
-                    (shui/popup-show!
-                     (.-target e)
-                     (fn [{:keys [id]}]
-                       (url-asset-pane
-                        {:on-close (fn []
-                                     (reset! *popover-open? false)
-                                     (shui/popup-hide! id))
-                         :on-asset-added (fn [asset-entity]
-                                           ;; Refresh asset list
-                                           (p/let [updated-assets (<get-image-assets)]
-                                             (reset! *loaded-assets (or (seq updated-assets) [])))
-                                           ;; Select the new asset
-                                           (let [image-data {:asset-uuid (str (:block/uuid asset-entity))
-                                                             :asset-type (:logseq.property.asset/type asset-entity)}]
-                                             (on-chosen nil
-                                                        (if (= :avatar mode)
-                                                          {:type :avatar
-                                                           :id (:id synthesized-avatar-context)
-                                                           :label (:label synthesized-avatar-context)
-                                                           :data (merge (:data synthesized-avatar-context) image-data)}
-                                                          {:type :image
-                                                           :id (str "image-" (:block/uuid asset-entity))
-                                                           :label (or (:block/title asset-entity) "")
-                                                           :data image-data}))))}))
-                     {:align :end
-                      :side "top"
-                      :content-props {:class "url-asset-pane-popup"
-                                      :sideOffset 8}
-                      :on-after-hide (fn [] (reset! *popover-open? false))}))}
-       (shui/tabler-icon "link" {:size 16})
-       [:span "Add image via URL"])
-      (shui/button
-       {:variant (if popover-open? :secondary :default)
-        :size :sm
-        :as-child true}
-       [:label
-        [:input#asset-upload-input.hidden
-         {:type "file"
-          :accept "image/*"
-          :multiple true
-          :on-change (fn [e]
-                       (let [files (array-seq (.-files (.-target e)))]
-                         (handle-upload files)))}]
-        [:span "Upload image"]])
+                 [:button.asset-picker-empty-row
+                  {:type "button"
+                   :on-click (fn [^js e] (open-url-pane! e))}
+                  [:div.row-icon (shui/tabler-icon "link" {:size 22})]
+                  [:div.row-body
+                   [:div.row-title "Paste image URL"]
+                   [:div.row-subtitle "Link to an image on the web"]]
+                  [:div.row-chevron (shui/tabler-icon "chevron-right" {:size 16})]]
 
-      ;; Mobile camera button
-      (when (util/mobile?)
+                 (when clipboard-supported?
+                   [:button.asset-picker-empty-row.no-subtitle
+                    {:type "button"
+                     :on-click (fn [_] (handle-clipboard-paste))}
+                    [:div.row-icon (shui/tabler-icon "clipboard" {:size 22})]
+                    [:div.row-body
+                     [:div.row-title "Paste from clipboard"]]
+                    [:div.row-shortcut
+                     (shui/shortcut "mod+v" {:style :compact})]])]))])]])
+
+     ;; Hidden file input lives at the top level so both the floating Upload
+     ;; button and the empty-state "Upload from computer" row reference it via
+     ;; <label for="asset-upload-input">, regardless of whether the floating
+     ;; actions bar is rendered.
+     [:input#asset-upload-input.hidden
+      {:type "file"
+       :accept "image/*"
+       :multiple true
+       :on-change (fn [e]
+                    (let [files (array-seq (.-files (.-target e)))]
+                      (handle-upload files)))}]
+
+     ;; Action buttons (floating at bottom) - only when we have assets or are
+     ;; loading. Zero-state replaces this bar with the empty-state rows above.
+     (when (or loading? (seq @*loaded-assets))
+       [:div.asset-picker-actions
         (shui/button
-         {:variant :secondary
+         {:variant :outline
+          :size :sm
+          :on-click (fn [^js e] (open-url-pane! e))}
+         (shui/tabler-icon "link" {:size 16})
+         [:span "Add image via URL"])
+        (shui/button
+         {:variant (if popover-open? :secondary :default)
           :size :sm
           :as-child true}
-         [:label
-          [:input.hidden
-           {:type "file"
-            :accept "image/*"
-            :capture "environment"
-            :on-change (fn [e]
-                         (let [files (array-seq (.-files (.-target e)))]
-                           (handle-upload files)))}]
-          [:div.flex.items-center.gap-2
-           (shui/tabler-icon "camera" {:size 16})
-           [:span "Take photo"]]]))]]))
+         [:label {:for "asset-upload-input"}
+          [:span "Upload image"]])
+
+        ;; Mobile camera button
+        (when (util/mobile?)
+          (shui/button
+           {:variant :secondary
+            :size :sm
+            :as-child true}
+           [:label
+            [:input.hidden
+             {:type "file"
+              :accept "image/*"
+              :capture "environment"
+              :on-change (fn [e]
+                           (let [files (array-seq (.-files (.-target e)))]
+                             (handle-upload files)))}]
+            [:div.flex.items-center.gap-2
+             (shui/tabler-icon "camera" {:size 16})
+             [:span "Take photo"]]]))])]))
 
 (defn open-image-asset-picker!
   "Opens the asset picker popup for selecting an image icon.

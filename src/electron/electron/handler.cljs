@@ -342,7 +342,7 @@
 (def *request-abort-signals (atom {}))
 
 (defmethod handle :httpRequest [_ [_ req-id opts]]
-  (let [{:keys [url abortable method data returnType headers]} opts]
+  (let [{:keys [url abortable method data returnType headers structured]} opts]
     (when-let [[method type] (and (not (string/blank? url))
                                   [(keyword (string/upper-case (or method "GET")))
                                    (keyword (string/lower-case (or returnType "json")))])]
@@ -357,19 +357,29 @@
                                     (swap! *request-abort-signals assoc req-id controller)
                                     {:signal (.-signal controller)}))))
           (p/then (fn [^js res]
-                    (case type
-                      :json
-                      (.json res)
+                    (let [body-p (case type
+                                   :json
+                                   (.json res)
 
-                      :arraybuffer
-                      (.arrayBuffer res)
+                                   :arraybuffer
+                                   (.arrayBuffer res)
 
-                      :base64
-                      (-> (.buffer res)
-                          (p/then #(.toString % "base64")))
+                                   :base64
+                                   (-> (.buffer res)
+                                       (p/then #(.toString % "base64")))
 
-                      :text
-                      (.text res))))
+                                   :text
+                                   (.text res))]
+                      (if structured
+                        (p/let [body body-p]
+                          #js {:status (.-status res)
+                               :statusText (.-statusText res)
+                               :ok (.-ok res)
+                               :headers (js/Object.fromEntries
+                                         (.entries (.-headers res)))
+                               :data body})
+                        ;; Legacy body-only path (unchanged behavior).
+                        body-p))))
           (p/catch
            (fn [^js e]
              ;; TODO: handle special cases
