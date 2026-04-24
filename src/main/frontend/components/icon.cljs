@@ -336,6 +336,11 @@
             ;; Fallback: midpoint
             [(subs text 0 mid) (subs text mid)]))))))
 
+;; Forward declaration: defined near renderable-icon? below; used by `icon`
+;; to defensively skip avatar/image asset rendering when the referenced
+;; asset block has been deleted.
+(declare asset-uuid->entity)
+
 (defn icon
   [icon' & [opts]]
   (let [normalized (or (normalize-icon icon') icon')
@@ -403,7 +408,7 @@
                (let [avatar-data (get normalized :data)
                      asset-uuid (get avatar-data :asset-uuid)
                      asset-type (get avatar-data :asset-type)]
-                 (if asset-uuid
+                 (if (asset-uuid->entity asset-uuid)
                    ;; Avatar with image - use async loading component
                    (avatar-image-cp asset-uuid asset-type avatar-data opts)
                    ;; Text-only avatar
@@ -429,8 +434,10 @@
                                  (assoc :color explicit-color))}
                        display-text)))))
 
-               ;; Image with asset - use image icon component
-               (and (map? normalized) (= :image (:type normalized)) (get-in normalized [:data :asset-uuid]))
+               ;; Image with asset - use image icon component. Skip if asset-uuid
+               ;; is dangling (entity deleted) so we don't crash during async load.
+               (and (map? normalized) (= :image (:type normalized))
+                    (asset-uuid->entity (get-in normalized [:data :asset-uuid])))
                (let [asset-uuid (get-in normalized [:data :asset-uuid])
                      asset-type (get-in normalized [:data :asset-type])]
                  (image-icon-cp asset-uuid asset-type opts))
@@ -657,11 +664,38 @@
 
     :else nil))
 
+(defn- asset-uuid->entity
+  "Resolve an asset-uuid (string) to a block entity, or nil if the asset
+   was deleted leaving a dangling reference in someone's icon data."
+  [asset-uuid]
+  (when (and (string? asset-uuid) (not (string/blank? asset-uuid)))
+    (try
+      (db/entity [:block/uuid (uuid asset-uuid)])
+      (catch :default _ nil))))
+
+(defn- heal-dangling-asset-icon
+  "If icon-value references a deleted asset, return a healed icon-value.
+   - :avatar → strip :asset-uuid/:asset-type, degrades to the text-only avatar
+   - :image  → return nil (no text fallback; icon is effectively gone)
+   Returns ::no-change if nothing to heal."
+  [icon-value]
+  (if-not (map? icon-value)
+    ::no-change
+    (let [asset-uuid (get-in icon-value [:data :asset-uuid])]
+      (cond
+        (not asset-uuid) ::no-change
+        (asset-uuid->entity asset-uuid) ::no-change
+        (= :avatar (:type icon-value))
+        (update icon-value :data dissoc :asset-uuid :asset-type)
+        :else nil))))
+
 (defn renderable-icon?
   "True when icon-value would produce a visible element via `icon`. For :icon type
    this includes verifying that the underlying Tabler component actually exists,
    which catches stored values whose :id no longer resolves (e.g. data saved from a
-   stale picker entry before the tabler-icons filter was added)."
+   stale picker entry before the tabler-icons filter was added). For :image/:avatar
+   with an asset-uuid, the asset entity must still exist — otherwise the picker
+   treats the icon as unrenderable (and for avatars falls back to the text value)."
   [icon-value]
   (boolean
    (when-let [normalized (normalize-icon icon-value)]
@@ -672,9 +706,9 @@
                (and (exists? js/tablerIcons)
                     (some? (gobj/get js/tablerIcons (str "Icon" (csk/->PascalCase v))))))
        :text (not (string/blank? (get-in normalized [:data :value])))
-       :avatar (or (some? (get-in normalized [:data :asset-uuid]))
+       :avatar (or (some? (asset-uuid->entity (get-in normalized [:data :asset-uuid])))
                    (not (string/blank? (get-in normalized [:data :value]))))
-       :image (some? (get-in normalized [:data :asset-uuid]))
+       :image (some? (asset-uuid->entity (get-in normalized [:data :asset-uuid])))
        false))))
 
 (defn get-image-assets
@@ -4188,6 +4222,15 @@
        (when initial-open?
          (js/setTimeout #(some-> (rum/deref *trigger-ref) (.click)) 32)))
      [initial-open?])
+
+    ;; Self-heal: if the stored icon references a deleted asset, rewrite it.
+    ;; :avatar degrades to text-only; :image clears the icon entirely.
+    (hooks/use-effect!
+     (fn []
+       (let [healed (heal-dangling-asset-icon icon-value)]
+         (when (not= healed ::no-change)
+           (on-chosen nil healed))))
+     [icon-value])
 
     ;; trigger
     (let [has-icon? (some? icon-value)]
