@@ -599,10 +599,6 @@
     min-height: 0;
   }
 
-  /* Sections - 8px padding on both sides (symmetric) */
-  .pane-section {
-    @apply px-2;
-  }
 }
 
 /* Topbar wrapper for easier inspection */
@@ -682,7 +678,7 @@
 
 /* Grid layout - 5 columns for larger, scannable images */
 .asset-picker-grid {
-  @apply grid gap-2 p-3;
+  @apply grid gap-2 px-3 pt-1 pb-3;
   @apply flex-1 overflow-y-auto;
   grid-template-columns: repeat(5, 1fr);
   min-height: 120px;
@@ -817,10 +813,8 @@
 }
 
 /* Zero-state action rows - shown when no assets exist, in place of grid.
-   Rows span full picker width so hover highlights reach the edges. The
-   ancestor padding (.pane-section px-2 and .asset-picker-grid p-3 + 56px
-   bottom) is cancelled via :has() selectors below — we drop the padding on
-   those ancestors specifically when they contain this empty-actions block. */
+   Rows span full picker width; the grid's own p-3 is cancelled via :has()
+   below so rows reach the picker edges for full-width hover. */
 .asset-picker-empty-actions {
   grid-column: 1 / -1;
   display: flex;
@@ -831,12 +825,6 @@
 /* Cancel the grid's own padding when its only child is the empty-actions block. */
 .asset-picker-grid:has(> .asset-picker-empty-actions) {
   padding: 0;
-}
-
-/* Cancel the pane-section's horizontal padding when it holds an empty-actions grid. */
-.pane-section:has(.asset-picker-empty-actions) {
-  padding-left: 0;
-  padding-right: 0;
 }
 
 .asset-picker-empty-row {
@@ -856,7 +844,7 @@
     right: 18px;
     bottom: 0;
     height: 1px;
-    background-color: var(--rx-gray-04);
+    background-color: var(--rx-gray-06);
   }
 
   &:hover {
@@ -883,7 +871,7 @@
   }
 
   .row-title {
-    @apply text-base font-medium;
+    @apply text-sm font-medium;
     color: var(--rx-gray-12);
     line-height: 1.25;
   }
@@ -896,8 +884,7 @@
 
   .row-chevron {
     flex-shrink: 0;
-    color: var(--rx-gray-09);
-    opacity: 0.6;
+    color: var(--rx-gray-10);
   }
 
   .row-shortcut {
@@ -1080,15 +1067,23 @@
   @apply flex items-center gap-1;
 
   .info-icon {
-    @apply p-0.5 rounded opacity-50 border-none bg-transparent cursor-help;
-    @apply hover:opacity-70;
+    @apply p-0.5 rounded border-none bg-transparent cursor-help transition-colors;
     color: var(--rx-gray-10);
+    margin-left: auto;
+    margin-right: 12px;
+
+    &:hover {
+      color: var(--rx-gray-12);
+    }
   }
 }
 
-/* Web image item - similar to image-asset-item */
+/* Web image item - similar to image-asset-item.
+   Deliberately NOT overflow-hidden: the img clips itself via its own
+   border-radius, and dropping clipping lets the .external-badge sit on
+   the avatar circle's edge without being cropped. */
 .web-image-item {
-  @apply overflow-hidden rounded cursor-pointer;
+  @apply rounded cursor-pointer;
   @apply transition-all duration-150;
   position: relative;
   width: 100%;
@@ -1122,19 +1117,16 @@
     border-radius: 4px;
   }
 
-  /* Avatar mode - circular previews */
+  /* Avatar mode - circular previews. The badge keeps its default
+     bottom: 2px; right: 2px; position — with overflow no longer
+     clipping, it floats at the square corner, diagonally outside the
+     circle. */
   &.avatar-mode {
     @apply rounded-full;
 
     img {
       @apply rounded-full;
       object-fit: cover;
-    }
-
-    .external-badge {
-      /* Position at bottom-right for circular items */
-      bottom: 0;
-      right: 0;
     }
   }
 
@@ -1149,6 +1141,7 @@
     border-radius: 4px;
     background-color: rgba(0, 0, 0, 0.6);
     color: white;
+    z-index: 1;
   }
 }
 

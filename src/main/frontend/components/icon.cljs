@@ -3027,12 +3027,16 @@
             :on-select handle-web-image-select
             :on-popover-change #(reset! *popover-open? %)}))
 
-        ;; "Available assets" section
+        ;; "Available assets" section — header is hidden when there are no
+        ;; assets at all (the action rows below communicate the zero state on
+        ;; their own). The header reappears as soon as the user has assets,
+        ;; including during search, where "· 0" conveys "no matches".
         [:div.pane-section
-         (section-header {:title "Available assets"
-                          :count asset-count
-                          :expanded? available-expanded?
-                          :on-toggle #(swap! *section-states update "Available assets" (fn [v] (if (nil? v) false (not v))))})
+         (when (seq assets)
+           (section-header {:title "Available assets"
+                            :count asset-count
+                            :expanded? available-expanded?
+                            :on-toggle #(swap! *section-states update "Available assets" (fn [v] (if (nil? v) false (not v))))}))
 
          ;; Asset grid
          (when available-expanded?
