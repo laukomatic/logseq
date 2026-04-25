@@ -38,7 +38,7 @@
       (util/copy-to-clipboard!))
   (notification/show! (t :plugin/logs-copied) :success))
 
-(rum/defc plugin-logs-panel
+(rum/defc ^:large-vars/cleanup-todo plugin-logs-panel
   [{:keys [pid name]}]
   (let [[entries set-entries!] (rum/use-state (or (get-entries pid) []))
         [level-filter set-level-filter!] (rum/use-state nil)
