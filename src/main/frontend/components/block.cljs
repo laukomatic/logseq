@@ -3669,7 +3669,8 @@
                 {:on-error (fn [_error]
                              (set-plugin-renderer-error! true))
                  :fallback-view outline-view-cp}
-                (some-> (:render matched-block-renderer) (apply [block-renderer-props-js])))
+                (when-some [renderer (:render matched-block-renderer)]
+                  (js/React.createElement renderer block-renderer-props-js)))
               (str "block-renderer-" (:key matched-block-renderer) "-" uuid))]]
 
           ;; --- Original outline ---
