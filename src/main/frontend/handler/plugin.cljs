@@ -688,14 +688,6 @@
                             (some-> (:key %) (str) (string/includes? (str "." key))))
                           (some->> type (name) (= (:type %)))))))
 
-(defn add-right-sidebar-plugin-renderer-item!
-  [pid key]
-  (let [repo (state/get-current-repo)
-        key' (keyword (str "_sidebar." (name key)))]
-    (when-let [id' (and (seq (get-hosted-renderers key'))
-                     (str (name pid) "." (name key)))]
-      (state/sidebar-add-block! repo id' :plugin))))
-
 ;; Block renderers
 (defn- ->block-renderer-properties-js
   [properties-map]
@@ -804,16 +796,6 @@
 
     :else v))
 
-;; Block renderers — registered through the unified hosted-renderer path.
-;; Storage type keywords (:block-renderers, :block-properties-renderers) are
-;; kept separate so keys don't collide with sidebar/hosted renderers.
-
-(defn register-block-renderer
-  "Register a block renderer.  Delegates to register-hosted-renderer
-   with :type \"block\"."
-  [pid key opts]
-  (register-hosted-renderer pid key (assoc opts :type "block")))
-
 (def get-block-renderers
   ;; [] - get all
   (create-local-renderer-getter
@@ -836,12 +818,6 @@
                       true))))
         (sort-by #(- (or (:priority %) 0)))
         first))))
-
-(defn register-block-properties-renderer
-  "Register a block-properties renderer.  Delegates to register-hosted-renderer
-   with :type \"block-properties\"."
-  [pid key opts]
-  (register-hosted-renderer pid key (assoc opts :type "block-properties")))
 
 (def get-block-properties-renderers
   ;; [] - get all
