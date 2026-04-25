@@ -3832,6 +3832,112 @@
 
     [:span.absolute.hidden {:ref *el-ref}]))
 
+(rum/defc color-swatches-popover
+  "Popover content for the color-picker. Auto-focuses the currently-
+   selected swatch on open and supports ArrowLeft/Right/Up/Down + Home/End
+   nav across the row, following the WAI-APG radio-group pattern (role=
+   radiogroup, role=radio, roving tab-index)."
+  [{:keys [colors color set-color! set-hover! on-select! on-hover! on-hover-end!]}]
+  (let [*parent (rum/use-ref nil)]
+    ;; On mount, land focus on the currently-selected swatch (or the first
+    ;; swatch if no selection matches the preset palette). Deferred a tick
+    ;; so it runs after Radix's own onOpenAutoFocus (which targets the first
+    ;; focusable) — otherwise Radix would clobber our placement.
+    (hooks/use-effect!
+     (fn []
+       (js/setTimeout
+        (fn []
+          (when-let [^js parent (rum/deref *parent)]
+            (when-let [^js btn (or (.querySelector parent ".color-swatch.is-selected")
+                                   (.querySelector parent ".color-swatch"))]
+              (.focus btn))))
+        0))
+     [])
+    [:div.color-picker-presets
+     {:role "radiogroup"
+      :aria-label "Icon color"
+      :ref *parent
+      :on-mouse-leave (fn []
+                        (set-hover! nil)
+                        (some-> on-hover-end! (apply [])))
+      :on-key-down
+      (fn [^js e]
+        (when-let [^js parent (rum/deref *parent)]
+          (let [code   (.-keyCode e)
+                stops  (vec (array-seq (.querySelectorAll parent ".color-swatch")))
+                n      (count stops)
+                active js/document.activeElement
+                idx    (.indexOf stops active)
+                go!    (fn [^js el] (some-> el .focus))]
+            (cond
+              ;; Right / Down: next (wrap)
+              (or (= code 39) (= code 40))
+              (do (util/stop e)
+                  (go! (nth stops (mod (if (>= idx 0) (inc idx) 0) n))))
+
+              ;; Left / Up: previous (wrap)
+              (or (= code 37) (= code 38))
+              (do (util/stop e)
+                  (go! (nth stops (mod (if (>= idx 0) (dec idx) (dec n)) n))))
+
+              ;; Home: first
+              (= code 36)
+              (do (util/stop e) (go! (first stops)))
+
+              ;; End: last
+              (= code 35)
+              (do (util/stop e) (go! (last stops)))))))}
+     (for [{value :value label :label hint :hint} colors
+           :let [active? (= value color)
+                 swatch-key (or value "none")]]
+       ;; Per-swatch tooltip-provider mirrors the asset-picker's
+       ;; web-image-item pattern (no hoisted top-level provider in this
+       ;; codebase). Radix shows on both hover and keyboard focus, so
+       ;; arrow-rove + Tab both surface the tooltip.
+       ;;
+       ;; Key passed in props (not via rum/with-key): rum's with-key
+       ;; doesn't survive shui's lsui-wrap React element shape — it
+       ;; sets the key but strips children to nil. React.createElement
+       ;; accepts `key` from the props map directly.
+       (shui/tooltip-provider
+        {:key swatch-key :delay-duration 300}
+        (shui/tooltip
+         (shui/tooltip-trigger
+          {:as-child true}
+          [:button.color-swatch
+           {:role "radio"
+            :aria-checked (str active?)
+            ;; Roving tabindex: only the active swatch is in the tab order,
+            ;; so Tab into the popover lands here, and Tab out exits to the
+            ;; next document tab stop (rather than walking nine swatches).
+            :tab-index (if active? "0" "-1")
+            :class (when active? "is-selected")
+            :style (when value {"--swatch-color" value})
+            :on-mouse-enter (fn []
+                              (set-hover! {:color value})
+                              (some-> on-hover! (apply [value])))
+            :on-focus (fn []
+                        (set-hover! {:color value})
+                        (some-> on-hover! (apply [value])))
+            :on-click (fn []
+                        (set-color! value)
+                        (set-hover! nil)
+                        (some-> on-hover-end! (apply []))
+                        (some-> on-select! (apply [value]))
+                        (shui/popup-hide!))}
+           (if value
+             [:span.swatch-fill {:style {:background-color value}}]
+             [:span.swatch-empty
+              (shui/tabler-icon "slash" {:size 14})])])
+         (shui/tooltip-content
+          {:side "top" :align "center" :show-arrow true}
+          [:div.text-center
+           [:div.font-medium label]
+           (when hint
+             [:div.text-xs.mt-0.5
+              {:style {:color "var(--lx-gray-11)"}}
+              hint])]))))]))
+
 (rum/defc color-picker
   [*color on-select! & {:keys [on-hover! on-hover-end! button-attrs]}]
   (let [;; Defensive: never let the CSS sentinel "inherit" leak into React state.
@@ -3842,39 +3948,23 @@
         effective-color (if hover (:color hover) color)
         *el (rum/use-ref nil)
         content-fn (fn []
-                     (let [colors [nil
-                                   (colors/variable :gray :10)
-                                   (colors/variable :indigo :10)
-                                   (colors/variable :cyan :10)
-                                   (colors/variable :green :10)
-                                   (colors/variable :orange :10)
-                                   (colors/variable :tomato :10)
-                                   (colors/variable :pink :10)
-                                   (colors/variable :red :10)]]
-                       [:div.color-picker-presets
-                        {:on-mouse-leave (fn []
-                                           (set-hover! nil)
-                                           (some-> on-hover-end! (apply [])))}
-                        (for [c colors]
-                          [:button.color-swatch
-                           {:key (or c "none")
-                            :class (when (= c color) "is-selected")
-                            :style (when c {"--swatch-color" c})
-                            :on-mouse-enter (fn []
-                                              (set-hover! {:color c})
-                                              (some-> on-hover! (apply [c])))
-                            :on-focus (fn []
-                                        (set-hover! {:color c})
-                                        (some-> on-hover! (apply [c])))
-                            :on-click (fn [] (set-color! c)
-                                        (set-hover! nil)
-                                        (some-> on-hover-end! (apply []))
-                                        (some-> on-select! (apply [c]))
-                                        (shui/popup-hide!))}
-                           (if c
-                             [:span.swatch-fill {:style {:background-color c}}]
-                             [:span.swatch-empty
-                              (shui/tabler-icon "slash" {:size 14})])])]))]
+                     (color-swatches-popover
+                      {:colors [{:value nil :label "Default"
+                                 :hint "Inherits the surrounding text color"}
+                                {:value (colors/variable :gray :10)   :label "Gray"}
+                                {:value (colors/variable :indigo :10) :label "Indigo"}
+                                {:value (colors/variable :cyan :10)   :label "Cyan"}
+                                {:value (colors/variable :green :10)  :label "Green"}
+                                {:value (colors/variable :orange :10) :label "Orange"}
+                                {:value (colors/variable :tomato :10) :label "Tomato"}
+                                {:value (colors/variable :pink :10)   :label "Pink"}
+                                {:value (colors/variable :red :10)    :label "Red"}]
+                       :color color
+                       :set-color! set-color!
+                       :set-hover! set-hover!
+                       :on-select! on-select!
+                       :on-hover! on-hover!
+                       :on-hover-end! on-hover-end!}))]
     ;; Display effect — fires for hover and committed color. Updates CSS var only.
     (hooks/use-effect!
      (fn []

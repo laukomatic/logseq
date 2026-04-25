@@ -321,20 +321,17 @@
   .color-swatch {
     @apply w-7 h-7 rounded-full p-0 flex items-center justify-center
     cursor-pointer border-0 bg-transparent;
-    transition: transform 120ms;
+    transition: transform 120ms, opacity 120ms;
 
     &:hover { transform: scale(1.1); }
     &:active { transform: scale(0.95); }
     /* Suppress hover scale when selected so ring doesn't overflow into neighbors */
     &.is-selected:hover { transform: none; }
 
-    /* Keyboard focus parity with hover: keyboard users get the same preview cue */
-    &:focus { outline: none; }
-    &:focus-visible {
-      outline: 2px solid var(--lx-accent-09);
-      outline-offset: 2px;
-      border-radius: 9999px;
-    }
+    /* Drop the system focus outline — focus state is rendered as a colored
+       halo on the inner .swatch-fill / .swatch-empty (rules below) so it
+       matches the selected ring's vocabulary instead of looking grafted on. */
+    &:focus, &:focus-visible { outline: none; }
 
     .swatch-fill {
       @apply w-6 h-6 rounded-full block;
@@ -347,6 +344,19 @@
         inset 0 0 0 1px rgba(0, 0, 0, 0.08),
         0 0 0 1px var(--lx-gray-02),
         0 0 0 3.5px color-mix(in srgb, var(--swatch-color, var(--lx-accent-09)) 65%, black);
+    }
+
+    /* Focus halo: same anatomy as the selected ring (inset edge + bg gap +
+       outer halo) but thinner and in the global accent color. Using the
+       swatch's own color blurs into "ring around a colored thing" — accent
+       blue is *never* the swatch's hue, so focus reads as a separate signal
+       no matter which swatch is hit. Skipped on .is-selected so the
+       selected ring isn't fighting a focus ring on top of itself. */
+    &:focus-visible:not(.is-selected) .swatch-fill {
+      box-shadow:
+        inset 0 0 0 1px rgba(0, 0, 0, 0.08),
+        0 0 0 1px var(--lx-gray-02),
+        0 0 0 2.5px var(--lx-accent-09);
     }
 
     .swatch-empty {
@@ -380,6 +390,25 @@
         0 0 0 1px var(--lx-gray-02),
         0 0 0 3.5px var(--lx-accent-09);
     }
+
+    /* Empty swatch has no --swatch-color, so fall back to the global accent
+       so the focus halo is still visible on the slash tile. */
+    &:focus-visible:not(.is-selected) .swatch-empty {
+      box-shadow:
+        inset 0 0 0 1px var(--rx-gray-07),
+        0 0 0 1px var(--lx-gray-02),
+        0 0 0 2.5px var(--lx-accent-09);
+    }
+  }
+
+  /* Mute non-active siblings while the user is engaging with the palette.
+     Engagement = mouse-hovering anywhere in the group, OR any swatch has
+     keyboard/programmatic focus. Three swatches stay at full opacity:
+     the hovered one, the focused one, and the currently-selected one.
+     At rest (no hover, no focus inside), every swatch is at full opacity. */
+  &:is(:hover, :focus-within)
+    .color-swatch:not(:hover):not(:focus):not(.is-selected) {
+    opacity: 0.55;
   }
 }
 
