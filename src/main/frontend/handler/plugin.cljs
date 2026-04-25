@@ -1094,7 +1094,7 @@
     (when auto-checking?
       (set-auto-checking! false))
     (when (or auto-checking? (not user-checking?))
-      ;; TODO: too many requests may be limited by Github api
+      ;; TODO: too many requests may be limited by GitHub API
       (when-let [plugins (seq (take 32 (state/get-enabled?-installed-plugins theme?)))]
         (->> plugins
           (map (fn [v] [(keyword (:id v)) v]))
