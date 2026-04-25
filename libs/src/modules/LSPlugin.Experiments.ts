@@ -122,7 +122,8 @@ export class LSPluginExperiments {
   registerDaemonRenderer(
     key: string,
     opts: {
-      sub?: Array<string>
+      before?: () => Promise<void>
+      subs?: Array<string>
       render: (props: {}) => any
     }
   ) {
