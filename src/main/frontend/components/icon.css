@@ -158,27 +158,40 @@
     }
   }
 
-  /* Keyboard navigation highlights — React-props-driven via CSS classes */
-  button.is-highlighted {
-    background-color: var(--lx-accent-04) !important;
-    outline: 2px solid var(--lx-accent-09);
-    outline-offset: -2px;
-    border-radius: 8px !important;
-  }
-
-  button.is-ghost-highlighted {
-    background-color: var(--rx-gray-04) !important;
-    outline: 1.5px solid var(--rx-gray-08);
-    outline-offset: -1.5px;
-    border-radius: 8px !important;
-  }
-
   .ui__button {
     &[data-action=del] {
       @apply !w-6 !h-6 overflow-hidden rounded-md opacity-60
       hover:text-red-rx-09 hover:opacity-90;
     }
   }
+}
+
+/* Keyboard navigation highlights — React-props-driven via CSS classes.
+   Shared between icon-picker and asset-picker tile grids. The outline
+   follows each tile's own border-radius (browsers do this for outline
+   since 2021), so square tiles get a 4px ring and circular avatars get
+   a circular ring without a per-shape override. */
+.cp__emoji-icon-picker button.is-highlighted,
+.asset-picker button.is-highlighted {
+  background-color: var(--lx-accent-04) !important;
+  outline: 2px solid var(--lx-accent-09);
+  outline-offset: 2px;
+}
+
+.cp__emoji-icon-picker button.is-ghost-highlighted,
+.asset-picker button.is-ghost-highlighted {
+  background-color: var(--rx-gray-04) !important;
+  outline: 1.5px solid var(--rx-gray-08);
+  outline-offset: -1.5px;
+}
+
+/* Full-width zero-state rows use an inset ring + subtle tint instead of
+   the default outline box (which looks heavy on a wide rectangle). */
+.asset-picker .asset-picker-empty-row.is-highlighted {
+  background-color: var(--lx-accent-04) !important;
+  outline: 2px solid var(--lx-accent-09);
+  outline-offset: -2px;
+  border-radius: 8px !important;
 }
 
 /* ── Shared tab-bar (underline-on-active). Scoped overrides above may
@@ -845,6 +858,12 @@
     bottom: 0;
     height: 1px;
     background-color: var(--rx-gray-06);
+  }
+
+  /* Hide the separator while the row is highlighted so it doesn't
+     paint over the blue focus outline along the bottom edge. */
+  &.is-highlighted::after {
+    display: none;
   }
 
   &:hover {

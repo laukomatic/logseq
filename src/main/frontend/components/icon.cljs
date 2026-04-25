@@ -1910,7 +1910,7 @@
   "Renders a single image asset thumbnail in the asset picker grid.
    When avatar-context is provided, renders circular previews and returns avatar data.
    Returns nil if asset file doesn't exist (ghost asset)."
-  [state asset {:keys [on-chosen avatar-context selected?]}]
+  [state asset {:keys [on-chosen avatar-context selected? item-id highlighted? ghost-highlighted?]}]
   (let [url @(::url state)
         error? @(::error state)
         asset-type (:logseq.property.asset/type asset)
@@ -1919,9 +1919,12 @@
         avatar-mode? (some? avatar-context)]
     [:button.image-asset-item
      {:title asset-title
+      :data-item-id item-id
       :class (util/classnames [{:avatar-mode avatar-mode?
                                 :selected selected?
-                                :ghost-asset error?}])
+                                :ghost-asset error?
+                                :is-highlighted highlighted?
+                                :is-ghost-highlighted ghost-highlighted?}])
       :on-click (fn [e]
                   (if error?
                     ;; Click-to-retry on ghost assets
@@ -1964,7 +1967,7 @@
   "Renders a single web image thumbnail with external indicator and tooltip.
    Shows license description on hover (simplified for glanceability)."
   [{:keys [url thumb-url title license license-desc source] :as web-image}
-   {:keys [on-click avatar-mode?]}]
+   {:keys [on-click avatar-mode? item-id highlighted? ghost-highlighted?]}]
   (let [display-url (or thumb-url url)]
     (shui/tooltip-provider
      {:delay-duration 300}
@@ -1972,7 +1975,10 @@
       (shui/tooltip-trigger
        {:as-child true}
        [:button.web-image-item
-        {:class (util/classnames [{:avatar-mode avatar-mode?}])
+        {:data-item-id item-id
+         :class (util/classnames [{:avatar-mode avatar-mode?
+                                   :is-highlighted highlighted?
+                                   :is-ghost-highlighted ghost-highlighted?}])
          :on-click (fn [e] (on-click e web-image))}
         (if display-url
           [:img {:src display-url :loading "lazy"}]
@@ -2111,11 +2117,14 @@
   ;; and must not overwrite the current images.
   (rum/local 0 ::request-id)
   {:did-mount (fn [state]
-                (let [[{:keys [query]}] (:rum/args state)
+                (let [[{:keys [query *result-sink]}] (:rum/args state)
                       *images (::images state)
                       *loading? (::loading? state)
                       *current-query (::current-query state)
-                      *request-id (::request-id state)]
+                      *request-id (::request-id state)
+                      publish! (fn [results]
+                                 (reset! *images results)
+                                 (when *result-sink (reset! *result-sink (vec results))))]
                   (when-not (string/blank? query)
                     (reset! *current-query query)
                     (reset! *loading? true)
@@ -2123,20 +2132,23 @@
                       (-> (<search-web-images query)
                           (p/then (fn [results]
                                     (when (= my-id @*request-id)
-                                      (reset! *images results)
+                                      (publish! results)
                                       (reset! *loading? false))))
                           (p/catch (fn [_err]
                                      (when (= my-id @*request-id)
-                                       (reset! *images [])
+                                       (publish! [])
                                        (reset! *loading? false))))))))
                 state)
    :did-update (fn [state]
-                 (let [[{:keys [query]}] (:rum/args state)
+                 (let [[{:keys [query *result-sink]}] (:rum/args state)
                        *images (::images state)
                        *loading? (::loading? state)
                        *current-query (::current-query state)
                        *request-id (::request-id state)
-                       current-query @*current-query]
+                       current-query @*current-query
+                       publish! (fn [results]
+                                  (reset! *images results)
+                                  (when *result-sink (reset! *result-sink (vec results))))]
                    ;; Only refetch if query changed
                    (when (and (not= query current-query)
                               (not (string/blank? query)))
@@ -2146,19 +2158,25 @@
                        (-> (<search-web-images query)
                            (p/then (fn [results]
                                      (when (= my-id @*request-id)
-                                       (reset! *images results)
+                                       (publish! results)
                                        (reset! *loading? false))))
                            (p/catch (fn [_err]
                                       (when (= my-id @*request-id)
-                                        (reset! *images [])
+                                        (publish! [])
                                         (reset! *loading? false))))))))
                  state)}
   "Renders the web images section with loading states.
    query: search query (page title or user input)
    on-select: callback when user selects a web image
    avatar-context: if set, picker is in avatar mode
-   on-popover-change: callback when confirmation popover opens/closes"
-  [state {:keys [query on-select avatar-context on-popover-change user-typing?]}]
+   on-popover-change: callback when confirmation popover opens/closes
+   *result-sink: optional atom to publish current results to (for parent
+     keyboard-nav)
+   highlighted-id: stable id of currently-highlighted tile (string), or nil
+   ghost-highlighted-id: stable id of the ghost-highlighted tile (hint that
+     Enter-from-search will pick this one), or nil"
+  [state {:keys [query on-select avatar-context on-popover-change user-typing?
+                 highlighted-id ghost-highlighted-id]}]
   (let [*images (::images state)
         *loading? (::loading? state)
         *current-query (::current-query state)
@@ -2212,11 +2230,15 @@
                 :class (when avatar-mode? "avatar-mode")}
                (shui/skeleton {:class "w-full h-full rounded"})])
             ;; Actual images
-            (for [web-image images]
+            (for [web-image images
+                  :let [web-id (str "web-" (:url web-image))]]
               (rum/with-key
                 (web-image-item
                  web-image
-                 {:on-click (fn [e img]
+                 {:item-id web-id
+                  :highlighted? (= highlighted-id web-id)
+                  :ghost-highlighted? (= ghost-highlighted-id web-id)
+                  :on-click (fn [e img]
                               (if skip-confirm?
                                 ;; Skip confirmation, save immediately
                                 (on-select e img true)
@@ -2243,7 +2265,7 @@
                                     :on-after-hide (fn []
                                                      (when on-popover-change (on-popover-change false)))}))))
                   :avatar-mode? avatar-mode?})
-                (str "web-" (:url web-image)))))])])))
+                web-id)))])])))
 
 ;; ============================================================================
 ;; URL Asset Pane (Popover content for "Add asset via URL")
@@ -2501,6 +2523,10 @@
                    ;; Fall back to async API.
                    (<read-from-async-api)))))))
 
+;; Forward declaration: keyboard-nav-controller is defined later in the file
+;; (near the icon-picker) but consumed here by the asset-picker.
+(declare keyboard-nav-controller)
+
 (rum/defcs asset-picker < rum/reactive db-mixins/query
   (rum/local "" ::search-q)
   (rum/local true ::loading?) ;; Start with loading state
@@ -2509,6 +2535,10 @@
   (rum/local false ::popover-open?) ;; Track if any popover is open
   (rum/local :avatar ::mode) ;; :avatar | :image — live tab state, seeded in :will-mount
   (rum/local nil ::paste-handler) ;; Holds latest clipboard-paste closure for the DOM listener
+  ;; Keyboard-nav state, parallels the icon-picker's model.
+  (rum/local :search ::focus-region)    ;; :search | :grid
+  (rum/local nil    ::highlighted-index) ;; flat index into computed flat-items
+  (rum/local nil    ::web-images-result) ;; web-images-section publishes its current images here
   ;; Create a single stable debounced setter. Must live in state (not the
    ;; render `let`) so the debounce timer persists across renders — otherwise
    ;; every keystroke gets a fresh timer and no debouncing happens, causing
@@ -2592,6 +2622,13 @@
         *loaded-assets (::loaded-assets state)
         *web-query-debounced (::web-query-debounced state)
         *popover-open? (::popover-open? state)
+        ;; Keyboard-nav state
+        *focus-region      (::focus-region state)
+        *highlighted-index (::highlighted-index state)
+        *web-images-result (::web-images-result state)
+        *search-input-ref  (rum/create-ref)
+        web-images         (rum/react *web-images-result)
+        highlighted-idx    (rum/react *highlighted-index)
         loading? (rum/react *loading?)
         popover-open? (rum/react *popover-open?)
         ;; Use cached assets if available, otherwise try to get them
@@ -2943,12 +2980,15 @@
          [:span.title "Drop images to upload"]
          [:span.subtitle "PNG, JPG, SVG, GIF, WebP"]]])
 
-     ;; Topbar: back | Avatar/Image tabs | trash, then separator, then search
+     ;; Topbar: back | Avatar/Image tabs | trash, then separator, then search.
+     ;; Each focusable stop carries `data-topbar-stop` so the keyboard-nav
+     ;; controller can rove DOM focus across them with ArrowLeft/Right.
      [:div.asset-picker-topbar
       [:div.asset-picker-tabrow
        [:div.asset-picker-back
         [:button.back-button
-         {:on-click on-back}
+         {:on-click on-back
+          :data-topbar-stop "back"}
          (shui/tabler-icon "chevron-left" {:size 16})
          [:span "Back"]]]
        [:div.asset-picker-tabs-slot
@@ -2956,10 +2996,13 @@
          (ui/tab-items
           {:tabs [[:avatar "Avatar"] [:image "Image"]]
            :active mode
-           :on-change (fn [m _e] (on-mode-change m))})]]
+           :on-change (fn [m _e] (on-mode-change m))
+           :button-attrs {:data-topbar-stop "tab"}})]]
        [:div.asset-picker-trash
         (when del-btn?
-          (shui/button {:variant :outline :size :sm :data-action "del"
+          (shui/button {:variant :outline :size :sm
+                        :data-action "del"
+                        :data-topbar-stop "trash"
                         :on-click on-delete}
                        (shui/tabler-icon "trash" {:size 17})))]]
       (shui/separator {:class "my-0 opacity-50"})
@@ -2970,11 +3013,59 @@
          {:placeholder "Search images"
           :value search-q
           :auto-focus true
+          :ref *search-input-ref
+          :on-focus (fn [_]
+                      (reset! *focus-region :search)
+                      (reset! *highlighted-index nil))
           :on-change (fn [e]
                        (let [v (util/evalue e)]
                          (reset! *search-q v)
+                         (reset! *focus-region :search)
+                         (reset! *highlighted-index nil)
                          ;; Update debounced web query
-                         (update-web-query! v)))})]]]
+                         (update-web-query! v)))
+          :on-key-down (fn [^js e]
+                         (let [code (.-keyCode e)]
+                           (cond
+                             ;; Escape: clear query or close picker (parity with icon-picker).
+                             (= code 27)
+                             (do (util/stop e)
+                                 (if (string/blank? @*search-q)
+                                   (shui/popup-hide!)
+                                   (do (reset! *search-q "")
+                                       (update-web-query! ""))))
+
+                             ;; Up / Shift+Tab: enter the topbar at the active mode tab.
+                             (or (= code 38)
+                                 (and (= code 9) (.-shiftKey e)))
+                             (do (util/stop e)
+                                 (reset! *focus-region :topbar)
+                                 (reset! *highlighted-index nil)
+                                 (when-let [^js cnt (some-> (rum/deref *search-input-ref)
+                                                            (.closest ".asset-picker"))]
+                                   ;; Land on the active mode tab; fall back to the first
+                                   ;; topbar stop if no tab is marked active.
+                                   (when-let [el (or (.querySelector cnt
+                                                                     "[data-topbar-stop='tab'][data-active='true']")
+                                                     (.querySelector cnt "[data-topbar-stop]"))]
+                                     (.focus el))))
+
+                             ;; Tab / Down: enter grid at first item.
+                             (or (and (= code 9) (not (.-shiftKey e)))
+                                 (= code 40))
+                             (do (util/stop e)
+                                 (reset! *focus-region :grid)
+                                 (reset! *highlighted-index 0))
+
+                             ;; Enter: fire the ghost-highlighted first result
+                             ;; (first tile in document order that has the ghost class).
+                             (= code 13)
+                             (when (nil? @*highlighted-index)
+                               (when-let [^js cnt (some-> (rum/deref *search-input-ref)
+                                                          (.closest ".asset-picker"))]
+                                 (when-let [btn (.querySelector cnt ".is-ghost-highlighted")]
+                                   (util/stop e)
+                                   (.click btn)))))))})]]]
 
      ;; Body - scrollable content area with top/bottom margin
      (let [;; Get recently used asset UUIDs and resolve to asset entities
@@ -2995,8 +3086,82 @@
            recently-used-count (count recently-used-row)
            section-states (rum/react *section-states)
            recently-used-expanded? (get section-states "Recently used" true)
-           available-expanded? (get section-states "Available assets" true)]
+           available-expanded? (get section-states "Available assets" true)
+           ;; Keyboard navigation: flat-items + sections mirror the icon-picker model.
+           ;; Include only sections that are currently rendered and expanded so
+           ;; flat indices align with visible DOM buttons.
+           recent-nav-row (when (and recently-used-expanded?
+                                     (seq recently-used-row)
+                                     (string/blank? search-q))
+                            recently-used-row)
+           web-nav-list   (when (not (string/blank? effective-web-query))
+                            (vec (or web-images [])))
+           empty-state?   (and available-expanded?
+                               (not loading?)
+                               (empty? filtered-assets)
+                               (empty? assets))
+           search-miss?   (and available-expanded?
+                               (not loading?)
+                               (empty? filtered-assets)
+                               (seq assets)
+                               (not (string/blank? search-q)))
+           available-nav-list (when (and available-expanded?
+                                         (not loading?)
+                                         (seq filtered-assets))
+                                (vec filtered-assets))
+           {:keys [flat-items sections]}
+           (let [*items (atom [])
+                 *secs  (atom [])
+                 add!   (fn [label cols its]
+                          (let [its (vec its) c (count its)]
+                            (when (pos? c)
+                              (swap! *secs conj {:label label :start (count @*items) :count c :cols cols})
+                              (swap! *items into its))))]
+             (add! "Recently used" 5
+                   (map (fn [a] {:type :asset :id (str "recent-" (:block/uuid a))})
+                        recent-nav-row))
+             (add! "Web images" 5
+                   (map (fn [w] {:type :web :id (str "web-" (:url w))})
+                        web-nav-list))
+             (cond
+               (seq available-nav-list)
+               (add! "Available assets" 5
+                     (map (fn [a] {:type :asset :id (str "asset-" (:block/uuid a))})
+                          available-nav-list))
+
+               empty-state?
+               (add! "Empty actions" 1
+                     (concat
+                      (when clipboard-supported? [{:type :clipboard-row :id "clipboard-row"}])
+                      [{:type :upload-row :id "upload-row"}])))
+             {:flat-items @*items :sections @*secs})
+           highlighted-id (when (and highlighted-idx (< highlighted-idx (count flat-items)))
+                            (:id (nth flat-items highlighted-idx)))
+           ;; Ghost-highlight: when the search input has focus and no tile is
+           ;; arrow-selected, preview the first *tile* so Enter picks it.
+           ;; Action rows (clipboard / upload) are excluded — Enter from
+           ;; search is meant to pick a media item, not fire a CTA.
+           ghost-highlighted-id (when (and (= @*focus-region :search)
+                                           (nil? highlighted-idx))
+                                  (some (fn [it]
+                                          (when (#{:asset :web} (:type it))
+                                            (:id it)))
+                                        flat-items))]
        [:div.bd.bd-scroll
+        ;; Invisible controller: attaches a single capture-phase keydown listener
+        ;; to .asset-picker and dispatches grid keys into *highlighted-index.
+        (keyboard-nav-controller
+         {:*focus-region      *focus-region
+          :*highlighted-index *highlighted-index
+          :*input-ref         *search-input-ref
+          :flat-items         flat-items
+          :sections           sections
+          :container-selector ".asset-picker"
+          :topbar-selector    ".asset-picker-topbar [data-topbar-stop]"
+          :on-escape          (fn []
+                                (if (string/blank? @*search-q)
+                                  (shui/popup-hide!)
+                                  (reset! *search-q "")))})
         ;; "Recently used" section - shows current + recently used in one row (only when not searching)
         (when (and (seq recently-used-row) (string/blank? search-q))
           [:div.pane-section
@@ -3007,12 +3172,16 @@
            (when recently-used-expanded?
              [:div.asset-picker-grid.recently-used-row
               {:class (when avatar-mode? "avatar-mode")}
-              (for [asset recently-used-row]
+              (for [asset recently-used-row
+                    :let [item-id (str "recent-" (:block/uuid asset))]]
                 (rum/with-key
                   (image-asset-item asset {:on-chosen on-chosen
                                            :avatar-context effective-avatar-context
-                                           :selected? (= (str (:block/uuid asset)) current-asset-uuid)})
-                  (str "recent-" (:block/uuid asset))))])])
+                                           :selected? (= (str (:block/uuid asset)) current-asset-uuid)
+                                           :item-id item-id
+                                           :highlighted? (= highlighted-id item-id)
+                                           :ghost-highlighted? (= ghost-highlighted-id item-id)})
+                  item-id))])])
 
         ;; "Web images" section - Wikipedia Commons images
         (when-not (string/blank? effective-web-query)
@@ -3025,7 +3194,10 @@
                                (not= search-q web-query))
             :avatar-context effective-avatar-context
             :on-select handle-web-image-select
-            :on-popover-change #(reset! *popover-open? %)}))
+            :on-popover-change #(reset! *popover-open? %)
+            :*result-sink *web-images-result
+            :highlighted-id highlighted-id
+            :ghost-highlighted-id ghost-highlighted-id}))
 
         ;; "Available assets" section — header is hidden when there are no
         ;; assets at all (the action rows below communicate the zero state on
@@ -3038,23 +3210,27 @@
                             :expanded? available-expanded?
                             :on-toggle #(swap! *section-states update "Available assets" (fn [v] (if (nil? v) false (not v))))}))
 
-         ;; Asset grid
+         ;; Asset grid. While loading we render an empty grid; the web-image
+         ;; skeletons + sync-asset placeholder cover the brief gap, so a
+         ;; second spinner here would just add noise.
          (when available-expanded?
            [:div.asset-picker-grid
             {:class (when avatar-mode? "avatar-mode")}
             (cond
               loading?
-              [:div.flex.flex-col.items-center.justify-center.h-32.text-gray-08
-               [:div.animate-spin (shui/tabler-icon "loader-2" {:size 32})]
-               [:span.text-sm.mt-2 "Loading assets..."]]
+              nil
 
               (seq filtered-assets)
-              (for [asset filtered-assets]
+              (for [asset filtered-assets
+                    :let [item-id (str "asset-" (:block/uuid asset))]]
                 (rum/with-key
                   (image-asset-item asset {:on-chosen on-chosen
                                            :avatar-context effective-avatar-context
-                                           :selected? (= (str (:block/uuid asset)) current-asset-uuid)})
-                  (str (:block/uuid asset))))
+                                           :selected? (= (str (:block/uuid asset)) current-asset-uuid)
+                                           :item-id item-id
+                                           :highlighted? (= highlighted-id item-id)
+                                           :ghost-highlighted? (= ghost-highlighted-id item-id)})
+                  item-id))
 
               :else
               (if (and (seq assets) (not (string/blank? search-q)))
@@ -3067,6 +3243,10 @@
                  (when clipboard-supported?
                    [:button.asset-picker-empty-row
                     {:type "button"
+                     :data-item-id "clipboard-row"
+                     :class (util/classnames
+                             [{:is-highlighted (= highlighted-id "clipboard-row")
+                               :is-ghost-highlighted (= ghost-highlighted-id "clipboard-row")}])
                      :on-click (fn [_] (handle-clipboard-paste))}
                     [:div.row-icon (shui/tabler-icon "clipboard" {:size 22})]
                     [:div.row-body
@@ -3075,14 +3255,16 @@
                     [:div.row-shortcut
                      (shui/shortcut "mod+v" {:style :combo})]])
 
+                 ;; Upload row: keyboard-nav clicks the button via data-item-id,
+                 ;; which propagates to the <label for> and fires the hidden input.
                  [:label.asset-picker-empty-row
                   {:for "asset-upload-input"
                    :role "button"
+                   :data-item-id "upload-row"
                    :tab-index 0
-                   :on-key-down (fn [^js e]
-                                  (when (or (= "Enter" (.-key e)) (= " " (.-key e)))
-                                    (.preventDefault e)
-                                    (trigger-upload!)))}
+                   :class (util/classnames
+                           [{:is-highlighted (= highlighted-id "upload-row")
+                             :is-ghost-highlighted (= ghost-highlighted-id "upload-row")}])}
                   [:div.row-icon (shui/tabler-icon "folder" {:size 22})]
                   [:div.row-body
                    [:div.row-title "Add from your computer"]
@@ -3384,12 +3566,37 @@
   [:all :emoji :icon :custom])
 
 (rum/defc keyboard-nav-controller
-  "Unified keyboard navigation controller for the icon picker.
+  "Unified keyboard navigation controller for picker-style popovers.
    Manages three tab stops: :tabs, :search, :grid.
-   Highlighting is React-props-driven (no DOM attribute manipulation)."
-  [*focus-region *highlighted-index *tab *input-ref flat-items sections *virtuoso-ref]
+   Highlighting is React-props-driven (no DOM attribute manipulation).
+
+   Options:
+     :*focus-region      — atom holding :search | :grid | :tabs | nil
+     :*highlighted-index — atom holding flat index into :flat-items (or nil)
+     :*input-ref         — ref to the search input
+     :flat-items         — flat seq of items with stable :id each
+     :sections           — seq of {:start :count :cols :label} maps
+     :*virtuoso-ref      — optional virtuoso scroll-container ref
+     :*tab               — optional tab atom (icon-picker only; enables ⌥⌘1/2/3
+                           section-collapse and the :tabs-region rove)
+     :container-selector — CSS selector of the scoping root (default
+                           `.cp__emoji-icon-picker`). Tile lookups and the
+                           keydown listener are scoped to this ancestor.
+     :on-escape          — called for Escape in the :tabs region (default
+                           `shui/popup-hide!`)
+     :topbar-selector    — optional CSS selector for a heterogeneous toolbar
+                           (e.g. `.asset-picker-topbar [data-topbar-stop]`).
+                           When set, the controller honors a `:topbar`
+                           focus-region: ArrowLeft/Right rove DOM focus across
+                           the matched elements, Enter clicks the focused one,
+                           ArrowDown/Tab/Escape return to search, Shift+Tab
+                           jumps to the grid (if any)."
+  [{:keys [*focus-region *highlighted-index *tab *input-ref flat-items sections
+           *virtuoso-ref container-selector on-escape topbar-selector]
+    :or {container-selector ".cp__emoji-icon-picker"
+         on-escape          shui/popup-hide!}}]
   (let [*el-ref (rum/use-ref nil)
-        get-cnt #(some-> (rum/deref *el-ref) (.closest ".cp__emoji-icon-picker"))
+        get-cnt #(some-> (rum/deref *el-ref) (.closest container-selector))
 
         focus-search! (fn []
                         (reset! *focus-region :search)
@@ -3403,7 +3610,11 @@
                         (reset! *highlighted-index idx)))
 
         focus-tabs! (fn [& [tab-id]]
-                      (reset! *focus-region :tabs)
+                      ;; If the picker provided a topbar-selector, use the
+                      ;; richer :topbar region (DOM rove across all topbar
+                      ;; stops). Otherwise fall back to the legacy :tabs
+                      ;; region (atom-mutation-only).
+                      (reset! *focus-region (if topbar-selector :topbar :tabs))
                       (reset! *highlighted-index nil)
                       (when-let [cnt (get-cnt)]
                         (let [selector (if tab-id
@@ -3504,20 +3715,72 @@
                                      (focus-grid! 0)))
 
                                (= code 27)
-                               (do (util/stop e) (shui/popup-hide!)))))
+                               (do (util/stop e) (on-escape)))))
+
+        ;; Topbar region: heterogeneous mix of buttons (e.g. back, mode tabs,
+        ;; trash, color swatch). Uses real DOM focus + click semantics. When
+        ;; arrow-rove lands on a [role=tab] element, also auto-click so tabs
+        ;; auto-activate (matches icon-picker's existing tabs-region behavior);
+        ;; non-tab stops only move focus and require Enter to commit.
+        handle-topbar-keys
+        (fn [^js e]
+          (when-let [cnt (and topbar-selector (get-cnt))]
+            (let [code   (.-keyCode e)
+                  stops  (vec (array-seq (.querySelectorAll cnt topbar-selector)))
+                  active js/document.activeElement
+                  idx    (.indexOf stops active)
+                  tab? (fn [^js el] (= (.getAttribute el "role") "tab"))
+                  focus! (fn [^js el]
+                           (when el
+                             (.focus el)
+                             (when (tab? el) (.click el))))]
+              (cond
+                ;; Right: next stop (no wrap; stop at edge)
+                (= code 39)
+                (do (util/stop e)
+                    (when (and (>= idx 0) (< (inc idx) (count stops)))
+                      (focus! (nth stops (inc idx)))))
+
+                ;; Left: prev stop (no wrap; stop at edge)
+                (= code 37)
+                (do (util/stop e)
+                    (when (pos? idx)
+                      (focus! (nth stops (dec idx)))))
+
+                ;; Enter / Space: native click on focused stop
+                (or (= code 13) (= (.-key e) " "))
+                (do (util/stop e)
+                    (when (>= idx 0) (.click (nth stops idx))))
+
+                ;; Down / Tab: return to search
+                (or (= code 40) (and (= code 9) (not (.-shiftKey e))))
+                (do (util/stop e) (focus-search!))
+
+                ;; Shift+Tab: jump into grid if any, else back to search
+                (and (= code 9) (.-shiftKey e))
+                (do (util/stop e)
+                    (if (pos? (count flat-items))
+                      (focus-grid! 0)
+                      (focus-search!)))
+
+                ;; Escape: return to search (parity with grid)
+                (= code 27)
+                (do (util/stop e) (focus-search!))))))
 
         ;; Refs for latest handler versions (avoids stale closures)
         *grid-handler-ref (hooks/use-ref handle-grid-keys)
         _ (set! (.-current *grid-handler-ref) handle-grid-keys)
         *tabs-handler-ref (hooks/use-ref handle-tabs-keys)
         _ (set! (.-current *tabs-handler-ref) handle-tabs-keys)
+        *topbar-handler-ref (hooks/use-ref handle-topbar-keys)
+        _ (set! (.-current *topbar-handler-ref) handle-topbar-keys)
 
         keydown-handler
         (hooks/use-callback
          (fn [^js e]
            (let [region @*focus-region]
-             (if (and (.-metaKey e) (.-altKey e))
-               ;; ⌥⌘1/2/3 toggle section collapse on the All tab
+             (if (and *tab (.-metaKey e) (.-altKey e))
+               ;; ⌥⌘1/2/3 toggle section collapse on the All tab (icon-picker only)
                (when (= @*tab :all)
                  (let [section-name (case (.-keyCode e)
                                       49 "Recently used"
@@ -3529,8 +3792,9 @@
                      (reset! *highlighted-index nil)
                      (util/stop e))))
                (case region
-                 :grid ((.-current *grid-handler-ref) e)
-                 :tabs ((.-current *tabs-handler-ref) e)
+                 :grid   ((.-current *grid-handler-ref) e)
+                 :tabs   ((.-current *tabs-handler-ref) e)
+                 :topbar ((.-current *topbar-handler-ref) e)
                  nil))))
          [])]
 
@@ -3538,7 +3802,7 @@
     (hooks/use-effect!
      (fn []
        (when-let [idx @*highlighted-index]
-         (if-let [virt @*virtuoso-ref]
+         (if-let [virt (some-> *virtuoso-ref deref)]
            ;; Virtuoso: scroll to row
            (when-let [si (section-for-index idx sections)]
              (let [sec (nth sections si)
@@ -4032,7 +4296,14 @@
        [:div.icon-picker-topbar
         [:div.tabs-section {:role "tablist"}
          (tab-observer @*tab {:q @*q :*result *result})
-         (keyboard-nav-controller *focus-region *highlighted-index *tab *input-ref flat-items sections *virtuoso-ref)
+         (keyboard-nav-controller
+          {:*focus-region      *focus-region
+           :*highlighted-index *highlighted-index
+           :*tab               *tab
+           :*input-ref         *input-ref
+           :flat-items         flat-items
+           :sections           sections
+           :*virtuoso-ref      *virtuoso-ref})
          (ui/tab-items
           {:tabs [[:all "All"] [:emoji "Emojis"] [:icon "Icons"] [:custom "Custom"]]
            :active @*tab

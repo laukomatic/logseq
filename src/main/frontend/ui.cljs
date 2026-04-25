@@ -537,21 +537,29 @@
 (defn tab-items
   "Render underline-style tab buttons. Caller wraps them in `.tabs-section`
    and supplies any siblings (observers, `.tab-actions`, etc.).
-   opts: :tabs [[id label] ...], :active id, :on-change (fn [id event])"
-  [{:keys [tabs active on-change]}]
+   opts: :tabs [[id label] ...], :active id, :on-change (fn [id event]),
+         :button-attrs (optional map merged into every button's attrs;
+                        does not override keys this fn sets)"
+  [{:keys [tabs active on-change button-attrs]}]
   (for [[id label] tabs
         :let [active? (= active id)]]
     [:button.tab-item
-     {:key (name id)
-      :role "tab"
-      :aria-selected (str active?)
-      :tab-index (if active? "0" "-1")
-      :data-text label
-      :data-tab-id (name id)
-      :data-active (when active? "true")
-      :on-mouse-down (fn [e]
-                       (util/stop e)
-                       (when on-change (on-change id e)))}
+     (merge button-attrs
+            {:key (name id)
+             :role "tab"
+             :aria-selected (str active?)
+             :tab-index (if active? "0" "-1")
+             :data-text label
+             :data-tab-id (name id)
+             :data-active (when active? "true")
+             ;; mousedown keeps focus where it was (e.g. on the search
+             ;; input) by preventing the default focus shift; click is
+             ;; what fires on-change so programmatic .click() from the
+             ;; keyboard-nav controller also works.
+             :on-mouse-down (fn [^js e] (util/stop e))
+             :on-click      (fn [^js e]
+                              (util/stop e)
+                              (when on-change (on-change id e)))})
      label]))
 
 (defn keyboard-shortcut-from-config [shortcut-name & {:keys [pick-first?]}]
