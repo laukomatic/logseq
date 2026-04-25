@@ -897,11 +897,13 @@
          [:span.text-red-rx-10.flex.items-center (shui/tabler-icon "alert-triangle-filled" {:size 20})]
          [:span name "  " [:code "#" (str pid)]]])
       [:p
-       "If any plugin is unavailable or you think it contains malicious code,
-         please email " [:a.hover:underline {:href (str "mailto://support@logseq.com?subject=Report plugin from Logseq Marketplace"
-                                                           (when pid (str " (#" pid ")")))} "support@logseq.com"]
-       " . Mention the name of the plugin and the URL of its GitHub repository.
-        The Logseq team usually responds within a business day."]])))
+       (interpolate-rich-text
+         (t :plugin/report-modal-desc)
+         {:support-email
+          [:a.hover:underline
+           {:href (str "mailto://support@logseq.com?subject=Report plugin from Logseq Marketplace"
+                       (when pid (str " (#" pid ")")))}
+           "support@logseq.com"]})]])))
 
 (defn parse-user-md-content
   [content {:keys [url]}]
