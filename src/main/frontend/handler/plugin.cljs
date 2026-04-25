@@ -147,7 +147,7 @@
             (t :plugin/uninstall))]]
         :error false uid)
       true)
-    (notification/show! "Illegal Logseq plugin package." :error)))
+    (notification/show! (t :plugin/invalid-package) :error)))
 
 (defn setup-global-apis-for-web!
   []
