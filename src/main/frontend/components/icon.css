@@ -627,6 +627,7 @@
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   padding: 0 14px;
+  height: 40px;
   background-color: var(--lx-gray-03);
   border-bottom: 1px solid var(--rx-gray-05);
 }
@@ -653,6 +654,50 @@
   .tabs-section {
     background: transparent;
     padding: 0;
+  }
+}
+
+/* Pilled segmented control — used for value/mode selection (Avatar | Image).
+   Visually distinct from tab-items: a wrapped pill shows the bounded set
+   of options, the active segment inverts to read as "current value". */
+.segmented-control {
+  @apply flex items-center;
+  /* Container bg sits on top of the asset-picker topbar's --lx-gray-03;
+     stepping up to --rx-gray-06 gives enough contrast in both themes
+     so the control reads as a bounded group instead of bleeding into
+     the topbar. */
+  background-color: var(--rx-gray-06);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+
+  .segment {
+    @apply flex items-center justify-center;
+    @apply text-sm font-medium cursor-pointer select-none;
+    @apply transition-colors duration-100;
+    border: none;
+    background: transparent;
+    color: var(--rx-gray-11);
+    padding: 2px 10px;
+    border-radius: 4px;
+    min-width: 56px;
+    line-height: 1.4;
+
+    &:hover {
+      color: var(--rx-gray-12);
+    }
+
+    &[data-active="true"] {
+      background-color: var(--lx-gray-01);
+      color: var(--rx-gray-12);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    }
+
+    /* Keyboard focus ring (matches the topbar's halo style) */
+    &:focus-visible {
+      outline: 2px solid var(--lx-accent-09);
+      outline-offset: 2px;
+    }
   }
 }
 

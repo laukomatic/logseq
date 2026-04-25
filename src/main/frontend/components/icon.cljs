@@ -2992,12 +2992,17 @@
          (shui/tabler-icon "chevron-left" {:size 16})
          [:span "Back"]]]
        [:div.asset-picker-tabs-slot
-        [:div.tabs-section {:role "tablist"}
-         (ui/tab-items
-          {:tabs [[:avatar "Avatar"] [:image "Image"]]
-           :active mode
-           :on-change (fn [m _e] (on-mode-change m))
-           :button-attrs {:data-topbar-stop "tab"}})]]
+        ;; Avatar/Image is a value selector, not a content tab — both modes
+        ;; show the same image grid; only the resulting icon's :type/shape
+        ;; differs. Render as a pilled segmented control with radiogroup
+        ;; ARIA semantics. Manual activation (Enter) is intentional: a mode
+        ;; flip writes to the DB when an asset is already selected.
+        (ui/segmented-control
+         {:options [[:avatar "Avatar"] [:image "Image"]]
+          :active mode
+          :on-change (fn [m _e] (on-mode-change m))
+          :aria-label "Icon rendering mode"
+          :button-attrs {:data-topbar-stop "tab"}})]
        [:div.asset-picker-trash
         (when del-btn?
           (shui/button {:variant :outline :size :sm
