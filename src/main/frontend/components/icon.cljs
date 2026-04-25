@@ -1353,7 +1353,7 @@
   [:div.its.icons-row items])
 
 (rum/defc icon-cp < rum/static
-  [icon-item {:keys [on-chosen hover highlighted-id ghost-highlighted-id]}]
+  [icon-item {:keys [on-chosen hover highlighted-id ghost-highlighted-id wave]}]
   (let [icon-id (get-in icon-item [:data :value])
         icon-name (or (:label icon-item) icon-id)
         color (get-in icon-item [:data :color])
@@ -1367,6 +1367,7 @@
         :class (cond
                  (= my-id highlighted-id) "is-highlighted"
                  (= my-id ghost-highlighted-id) "is-ghost-highlighted")
+        :style (when wave {"--r" (:r wave) "--c" (:c wave)})
         :title icon-name
         :on-click (fn [e]
                     (on-chosen e (cond-> {:type :tabler-icon
@@ -1383,7 +1384,7 @@
        (ui/icon icon-id' {:size 24}))]))
 
 (rum/defc emoji-cp < rum/static
-  [icon-item {:keys [on-chosen hover highlighted-id ghost-highlighted-id]}]
+  [icon-item {:keys [on-chosen hover highlighted-id ghost-highlighted-id wave]}]
   (let [emoji-id (get-in icon-item [:data :value])
         emoji-name (or (:label icon-item) emoji-id)
         my-id (:id icon-item)]
@@ -1394,6 +1395,7 @@
        :class (cond
                 (= my-id highlighted-id) "is-highlighted"
                 (= my-id ghost-highlighted-id) "is-ghost-highlighted")
+       :style (when wave {"--r" (:r wave) "--c" (:c wave)})
        :title emoji-name
        :on-click (fn [e]
                    (on-chosen e {:type :emoji
@@ -1408,7 +1410,7 @@
                  :style {:line-height 1}}]]))
 
 (rum/defc text-cp < rum/static
-  [icon-item {:keys [on-chosen hover highlighted-id ghost-highlighted-id]}]
+  [icon-item {:keys [on-chosen hover highlighted-id ghost-highlighted-id wave]}]
   (let [text-value (get-in icon-item [:data :value])
         text-color (get-in icon-item [:data :color])
         my-id (:id icon-item)
@@ -1422,6 +1424,7 @@
        :class (cond
                 (= my-id highlighted-id) "is-highlighted"
                 (= my-id ghost-highlighted-id) "is-ghost-highlighted")
+       :style (when wave {"--r" (:r wave) "--c" (:c wave)})
        :title text-value
        :on-click (fn [e]
                    (on-chosen e {:type :text
@@ -1435,7 +1438,7 @@
      display-text]))
 
 (rum/defc avatar-cp < rum/static
-  [icon-item {:keys [on-chosen hover highlighted-id ghost-highlighted-id]}]
+  [icon-item {:keys [on-chosen hover highlighted-id ghost-highlighted-id wave]}]
   (let [avatar-value (get-in icon-item [:data :value])
         backgroundColor (or (get-in icon-item [:data :backgroundColor])
                             (colors/variable :gray :09))
@@ -1449,6 +1452,7 @@
       {:tabIndex "-1"
        :data-item-id my-id
        :title avatar-value
+       :style (when wave {"--r" (:r wave) "--c" (:c wave)})
        :class (str "p-0 border-0 bg-transparent cursor-pointer"
                    (cond
                      (= my-id highlighted-id) " is-highlighted"
@@ -1571,12 +1575,18 @@
                                                        (catch js/Error e
                                                          (js/console.error e)
                                                          nil))]
-                                        (mapv #(render-fn % opts) icons))))}
+                                        (vec (map-indexed
+                                              (fn [c-idx item]
+                                                (render-fn item (assoc opts :wave {:r idx :c c-idx})))
+                                              icons)))))}
 
               searching?
               (assoc :custom-scroll-parent (some-> (rum/deref *el-ref) (.closest ".bd-scroll"))))))
          [:div.its
-          (map #(render-fn % opts) icon-items)]))]))
+          (map-indexed
+           (fn [i item]
+             (render-fn item (assoc opts :wave {:r (quot i 9) :c (mod i 9)})))
+           icon-items)]))]))
 
 (rum/defc emojis-cp < rum/static
   [emojis* opts]
@@ -3975,7 +3985,11 @@
                        :on-select! on-select!
                        :on-hover! on-hover!
                        :on-hover-end! on-hover-end!}))]
-    ;; Display effect — fires for hover and committed color. Updates CSS var only.
+    ;; Display effect on the picker root — fires for both hover and committed
+    ;; color. Combined with the per-cell `--r`/`--c` `transition-delay` in CSS,
+    ;; every change to the var (hover preview OR commit) plays the diagonal
+    ;; wave across the grid. Rapid hover sweeps gracefully retarget mid-flight
+    ;; because each cell's delay holds its current value until activation.
     (hooks/use-effect!
      (fn []
        (when-let [^js picker (some-> (rum/deref *el) (.closest ".cp__emoji-icon-picker"))]

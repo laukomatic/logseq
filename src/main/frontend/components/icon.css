@@ -129,10 +129,24 @@
            transitioned — animating it from `currentColor` (the icon's
            tint, e.g. red) would briefly tint the ring red before the
            accent color landed. With color set instantly by the highlight
-           rules, the ring just grows in the right color from t=0. */
+           rules, the ring just grows in the right color from t=0.
+
+           `color` is also transitioned, with a per-cell delay computed
+           from the inline --r / --c custom properties. When the user
+           commits a new icon color, --ls-color-icon-preset on the picker
+           root changes, and each cell's `color` (inherited via
+           currentColor) glides into the new value at its own delay,
+           producing a diagonal "wave" across the grid (top-left first,
+           bottom-right last). Hover preview is intentionally NOT routed
+           through the CSS var (it goes to the trigger and page header
+           via :ui/icon-hover-preview state) so the wave has a real
+           old→new delta to interpolate at commit time. */
         transition: background-color 150ms,
                     outline-width 150ms,
-                    outline-offset 150ms;
+                    outline-offset 150ms,
+                    color 320ms cubic-bezier(0.4, 0, 0.2, 1);
+        transition-delay: 0ms, 0ms, 0ms,
+                          calc(var(--c, 0) * 22ms + var(--r, 0) * 36ms);
 
         &:hover {
           background-color: var(--rx-gray-05);
@@ -150,6 +164,17 @@
 
     .virtuoso-item-list {
       @apply pt-1 pb-4 px-2;
+    }
+
+    /* Honor reduced-motion: drop the staggered color transition so the
+       grid snaps to the new color rather than animating across cells. */
+    @media (prefers-reduced-motion: reduce) {
+      > .its > button,
+      .icons-row > button {
+        transition: background-color 150ms,
+                    outline-width 150ms,
+                    outline-offset 150ms;
+      }
     }
   }
 
