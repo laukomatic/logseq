@@ -8,7 +8,7 @@
             [electron.ipc :as ipc]
             [frontend.components.svg :as svg]
             [frontend.config :as config]
-            [frontend.context.i18n :refer [t]]
+            [frontend.context.i18n :refer [t interpolate-rich-text]]
             [frontend.format :as format]
             [frontend.fs :as fs]
             [frontend.handler.common.plugin :as plugin-common-handler]
