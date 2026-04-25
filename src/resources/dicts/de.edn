@@ -1729,7 +1729,7 @@
  :ui/deleted "Gelöscht"
  :ui/dont-remind-me-again "Nicht mehr erinnern"
  :ui/empty "Leer"
- :ui/error "Fehler"
+
  :ui/error-boundary-error "Fehler von der Oberfläche abgefangen!\n {1}"
  :ui/export "Exportieren"
  :ui/false "Falsch"

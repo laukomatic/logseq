@@ -1729,7 +1729,7 @@
  :ui/deleted "Verwijderd"
  :ui/dont-remind-me-again "Herinner me hier niet meer aan"
  :ui/empty "Leeg"
- :ui/error "Fout"
+
  :ui/error-boundary-error "Fout opgevangen door UI!\n {1}"
  :ui/export "Exporteren"
  :ui/false "Onwaar"

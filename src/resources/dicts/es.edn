@@ -1729,7 +1729,7 @@
  :ui/deleted "Eliminado"
  :ui/dont-remind-me-again "No recordarme de nuevo"
  :ui/empty "Vacío"
- :ui/error "Error"
+
  :ui/error-boundary-error "¡Error capturado por la interfaz!\n {1}"
  :ui/export "Exportar"
  :ui/false "Falso"

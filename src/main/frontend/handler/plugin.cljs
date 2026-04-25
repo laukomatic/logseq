@@ -123,11 +123,11 @@
           uid (keyword (str "plugin-illegal-package-error-" (hash url)))]
       (notification/show!
         [:div.flex.flex-col.gap-2
-         [:div "Failed to parse the plugin package config."]
+         [:div (t :plugin.package-config/parse-error)]
          [:div.text-xs.opacity-70.break-all package-json-path]
          (when (= type :external)
            [:div.text-xs.opacity-70
-            "Removing it only detaches the plugin from Logseq and keeps the source folder untouched."])
+            (t :plugin.package-config/detach-desc)])
          [:div.flex.items-center.gap-2.pt-1
           (shui/button
             {:size :sm
@@ -137,12 +137,12 @@
                                      (notification/clear! uid)
                                      (notification/show!
                                        (if (= type :installed)
-                                         (str "Removed broken plugin \"" id "\".")
-                                         "Removed the broken plugin from the plugin list.")
+                                         (t :plugin.package-config/remove-installed-success id)
+                                         (t :plugin.package-config/remove-external-success))
                                        :success)))
-                           (p/catch (fn [error]
+                           (p/catch (fn [_error]
                                       (notification/show!
-                                        (str "Failed to remove the broken plugin.\n" error)
+                                        (t :plugin.package-config/remove-error)
                                         :error)))))}
             (t :plugin/uninstall))]]
         :error false uid)
@@ -341,9 +341,9 @@
                                              (notification/show!
                                                (t :plugin/installed-plugin name) :success))))
                                  (p/catch (fn [^js e]
-                                            (notification/show!
-                                              (str "Install failed: " name "\n" (.-message e))
-                                              :error)))))))
+                                             (notification/show!
+                                               (t :plugin/install-error name (.-message e))
+                                               :error)))))))
 
                          :error
                          (let [error-code (keyword (string/replace (:error-code payload) #"^[\s\:\[]+" ""))
@@ -911,7 +911,7 @@
               {:label "plugin-readme"
                :content-props {:class "max-h-[86vh] overflow-auto"}}))
         (p/catch #(do (js/console.warn %)
-                    (notification/show! "No README content." :warning))))
+                     (notification/show! (t :plugin/readme-empty-warning) :warning))))
       ;; market
       (shui/dialog-open! (fn [_] (display item nil)) {:label "plugin-readme"}))))
 
@@ -1170,7 +1170,7 @@
 ;; components
 (rum/defc lsp-indicator < rum/reactive
   []
-  (let [text (or (state/sub :plugin/indicator-text) (when (not (util/electron?)) "LOADING"))]
+  (let [text (or (state/sub :plugin/indicator-text) (when (not (util/electron?)) (t :plugin/loading-indicator)))]
     (when-not (true? text)
       [:div.flex.align-items.justify-center.h-screen.w-full.preboot-loading
        [:span.flex.items-center.justify-center.flex-col
@@ -1212,7 +1212,7 @@
                   (.on "beforeload"
                     (fn [^js pl]
                       (let [text (when (util/electron?)
-                                   (util/format "Load plugin: %s..." (.-id pl)))]
+                                   (t :plugin/load-plugin-indicator (.-id pl)))]
                         (some->> text (state/set-state! :plugin/indicator-text)))))
 
                   (.on "reloaded"
@@ -1314,7 +1314,7 @@
     (p/catch
       (fn [^js e]
         (log/error :setup-plugin-system-error e)
-        (state/set-state! :plugin/indicator-text (str "Fatal: " e))))))
+        (state/set-state! :plugin/indicator-text (t :plugin/fatal-error e))))))
 
 (defn setup!
   "setup plugin core handler"

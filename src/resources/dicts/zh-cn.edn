@@ -1733,7 +1733,7 @@
  :ui/deleted "已删除"
  :ui/dont-remind-me-again "不再提醒"
  :ui/empty "空"
- :ui/error "错误"
+
  :ui/error-boundary-error "界面捕获到错误！\n {1}"
  :ui/export "导出"
  :ui/false "否"

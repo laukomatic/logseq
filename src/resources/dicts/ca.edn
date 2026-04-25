@@ -1729,7 +1729,7 @@
  :ui/deleted "Suprimit"
  :ui/dont-remind-me-again "No m'ho tornis a recordar"
  :ui/empty "Buit"
- :ui/error "Error"
+
  :ui/error-boundary-error "Error detectat per la interfície!\n {1}"
  :ui/export "Exportar"
  :ui/false "Fals"

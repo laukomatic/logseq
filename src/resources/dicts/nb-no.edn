@@ -1729,7 +1729,7 @@
  :ui/deleted "Slettet"
  :ui/dont-remind-me-again "Ikke påminn meg igjen"
  :ui/empty "Tom"
- :ui/error "Feil"
+
  :ui/error-boundary-error "Feil fanget av brukergrensesnittet!\n {1}"
  :ui/export "Eksporter"
  :ui/false "Usann"

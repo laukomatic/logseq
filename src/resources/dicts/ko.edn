@@ -1729,7 +1729,7 @@
  :ui/deleted "삭제됨"
  :ui/dont-remind-me-again "다시 알리지 않기"
  :ui/empty "비어 있음"
- :ui/error "오류"
+
  :ui/error-boundary-error "UI 오류 발생!\n {1}"
  :ui/export "내보내기"
  :ui/false "거짓"

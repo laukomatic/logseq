@@ -1729,7 +1729,7 @@
  :ui/deleted "حذف‌شده"
  :ui/dont-remind-me-again "دیگر یادآوری نکن"
  :ui/empty "خالی"
- :ui/error "خطا"
+
  :ui/error-boundary-error "خطا توسط رابط کاربری گرفته شد!\n {1}"
  :ui/export "صدور"
  :ui/false "نادرست"

@@ -1729,7 +1729,7 @@
  :ui/deleted "削除済み"
  :ui/dont-remind-me-again "今後表示しない"
  :ui/empty "空"
- :ui/error "エラー"
+
  :ui/error-boundary-error "UIでエラーが発生しました！\n {1}"
  :ui/export "エクスポート"
  :ui/false "偽"

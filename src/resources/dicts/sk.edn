@@ -1729,7 +1729,7 @@
  :ui/deleted "Odstránené"
  :ui/dont-remind-me-again "Už mi nepripomínať"
  :ui/empty "Prázdne"
- :ui/error "Chyba"
+
  :ui/error-boundary-error "Chyba zachytená v UI!\n {1}"
  :ui/export "Exportovať"
  :ui/false "Nepravda"

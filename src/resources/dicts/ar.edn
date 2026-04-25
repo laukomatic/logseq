@@ -1729,7 +1729,7 @@
  :ui/deleted "محذوف"
  :ui/dont-remind-me-again "لا تذكرني مجددًا"
  :ui/empty "فارغ"
- :ui/error "خطأ"
+
  :ui/error-boundary-error "خطأ التقطته واجهة المستخدم!\n {1}"
  :ui/export "تصدير"
  :ui/false "خطأ"

@@ -1729,7 +1729,7 @@
  :ui/deleted "Dihapus"
  :ui/dont-remind-me-again "Jangan ingatkan saya lagi"
  :ui/empty "Kosong"
- :ui/error "Kesalahan"
+
  :ui/error-boundary-error "Kesalahan tertangkap oleh UI!\n {1}"
  :ui/export "Ekspor"
  :ui/false "Salah"
