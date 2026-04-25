@@ -540,14 +540,24 @@
         preview-active? (and preview (= (:db-id preview) (:db/id entity)))
         effective-color (cond
                           preview-active? (or (:color preview) "inherit")
-                          :else (or (:color node-icon) "inherit"))]
+                          :else (or (:color node-icon) "inherit"))
+        ;; For avatars, the wrapper's `color` cascade reaches the text via
+        ;; inheritance but the inline `background-color` ignores it. Mutate
+        ;; the avatar's [:data :backgroundColor] so the circle previews too,
+        ;; in lockstep with the text.
+        effective-node-icon (if (and preview-active?
+                                     (map? node-icon)
+                                     (= :avatar (:type node-icon)))
+                              (-> (normalize-icon node-icon)
+                                  (assoc-in [:data :backgroundColor] effective-color))
+                              node-icon)]
     (when-not (or (string/blank? node-icon) (and (contains? #{"letter-n" "file"} node-icon) (:not-text-or-page? opts)))
       [:div.icon-cp-container.flex.items-center.justify-center
        {:style {:color effective-color}
         :class (str (when photo-icon? "photo-icon")
                     (when (and effective-color (not= effective-color "inherit")) " icon-colored")
                     (when-let [c (:class opts)] (str " " c)))}
-       (icon node-icon opts')])))
+       (icon effective-node-icon opts')])))
 
 (defn- emoji-char?
   "Check if a string is a single emoji character by checking against known emojis"
@@ -4418,6 +4428,14 @@
          [:div.tab-actions
           ;; color picker (always visible)
           (color-picker *color (fn [c]
+                                 ;; Synchronously update *color before calling
+                                 ;; on-chosen. The on-chosen wrapper above re-applies
+                                 ;; @*color over `m`, so without this it would over-
+                                 ;; write the freshly-picked color with the previous
+                                 ;; one (color-picker's React state hasn't propagated
+                                 ;; to the *color atom yet — its useEffect runs after
+                                 ;; this synchronous callback).
+                                 (reset! *color c)
                                  (cond
                                    (or (= :icon (:type normalized-icon-value))
                                        (= :text (:type normalized-icon-value)))
@@ -4571,9 +4589,14 @@
         ;; unified shape (e.g. {:type :icon :id "house"} with no :data :value)
         ;; bypasses normalization and the render cond fails → icon disappears.
         effective-icon-value (if (and preview-active? (map? icon-value))
-                               (let [c (or (:color preview) "inherit")]
-                                 (-> (normalize-icon icon-value)
-                                     (assoc-in [:data :color] c)))
+                               (let [c (or (:color preview) "inherit")
+                                     normalized (normalize-icon icon-value)
+                                     avatar? (= :avatar (:type normalized))]
+                                 (cond-> normalized
+                                   true    (assoc-in [:data :color] c)
+                                   ;; Mirror :data :color into :backgroundColor for
+                                   ;; avatars so the circle previews along with text.
+                                   avatar? (assoc-in [:data :backgroundColor] c)))
                                icon-value)]
     (icon effective-icon-value (merge {:color? true} icon-props))))
 
