@@ -124,7 +124,15 @@
 
       > button {
         @apply flex items-center justify-center rounded-lg active:opacity-70;
-        transition: background-color 150ms, outline-color 150ms;
+        /* Animate width + offset so the ring grows/shrinks smoothly when
+           the highlight state changes. outline-color is intentionally NOT
+           transitioned — animating it from `currentColor` (the icon's
+           tint, e.g. red) would briefly tint the ring red before the
+           accent color landed. With color set instantly by the highlight
+           rules, the ring just grows in the right color from t=0. */
+        transition: background-color 150ms,
+                    outline-width 150ms,
+                    outline-offset 150ms;
 
         &:hover {
           background-color: var(--rx-gray-05);
@@ -162,6 +170,13 @@
     &[data-action=del] {
       @apply !w-6 !h-6 overflow-hidden rounded-md opacity-60
       hover:text-red-rx-09 hover:opacity-90;
+
+      /* Force opacity 1 on keyboard focus so the focus ring paints
+         crisply; the base opacity-60 otherwise dims the outline into
+         a muted glow. */
+      &:focus-visible {
+        opacity: 1;
+      }
     }
   }
 }
@@ -244,8 +259,11 @@
       background: transparent !important;
     }
 
-    /* Keyboard focus state */
+    /* Keyboard focus state. Force opacity 1 so the focus ring on an
+       inactive tab paints fully (the base rule sets opacity-60, which
+       would otherwise dim the outline). */
     &:focus-visible {
+      opacity: 1;
       outline: 2px solid var(--lx-accent-09);
       outline-offset: -2px;
       border-radius: 4px;
@@ -708,7 +726,45 @@
   .ui__button[data-action=del] {
     @apply !w-6 !h-6 overflow-hidden rounded-md opacity-60;
     @apply hover:text-red-rx-09 hover:opacity-90;
+
+    /* Keyboard focus state. Force opacity 1 so the focus ring paints at
+       full alpha; otherwise the button's base opacity-60 dims the outline
+       and reads as a "muted glow" instead of a clear focus indicator. */
+    &:focus-visible {
+      opacity: 1;
+    }
   }
+}
+
+/* Unified focus ring across the asset-picker topbar. Without this, three
+   different mechanisms render three different blues: back button uses the
+   browser-default outline (system blue), segments use our custom outline
+   (--lx-accent-09), and the trash button uses shui's box-shadow ring
+   (Tailwind --ring token). This rule overrides all three to match. */
+.asset-picker-topbar :is(
+  .back-button,
+  .segmented-control .segment,
+  .ui__button[data-action=del]
+):focus-visible {
+  outline: 2px solid var(--lx-accent-09);
+  outline-offset: 2px;
+  box-shadow: none;
+  border-radius: 4px;
+}
+
+/* Same unified treatment for the icon-picker topbar. The color-picker
+   trigger and the trash button each had their own focus stylings (browser
+   default + shui's --ring respectively); pulling them onto --lx-accent-09
+   so all topbar stops match. The .tab-item rule (above) already uses the
+   same token; keep it as-is. */
+.cp__emoji-icon-picker .tabs-section :is(
+  .color-picker-trigger,
+  .ui__button[data-action=del]
+):focus-visible {
+  outline: 2px solid var(--lx-accent-09);
+  outline-offset: 2px;
+  box-shadow: none;
+  border-radius: 4px;
 }
 
 /* Search input matching icon picker */

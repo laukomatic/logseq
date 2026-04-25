@@ -3833,7 +3833,7 @@
     [:span.absolute.hidden {:ref *el-ref}]))
 
 (rum/defc color-picker
-  [*color on-select! & {:keys [on-hover! on-hover-end!]}]
+  [*color on-select! & {:keys [on-hover! on-hover-end! button-attrs]}]
   (let [;; Defensive: never let the CSS sentinel "inherit" leak into React state.
         initial-color (let [v @*color] (when (and v (not= v "inherit")) v))
         [color, set-color!] (rum/use-state initial-color)
@@ -3900,8 +3900,9 @@
      [])
 
     [:button.color-picker-trigger
-     {:ref *el
-      :on-click (fn [^js e] (shui/popup-show! (.-target e) content-fn {:content-props {:side "bottom" :side-offset 6}}))}
+     (merge button-attrs
+            {:ref *el
+             :on-click (fn [^js e] (shui/popup-show! (.-target e) content-fn {:content-props {:side "bottom" :side-offset 6}}))})
      (if color
        [:span.color-picker-fill {:style {:background-color color}}]
        [:span.color-picker-empty
@@ -4308,14 +4309,22 @@
            :*input-ref         *input-ref
            :flat-items         flat-items
            :sections           sections
-           :*virtuoso-ref      *virtuoso-ref})
+           :*virtuoso-ref      *virtuoso-ref
+           :topbar-selector    ".cp__emoji-icon-picker .tabs-section [data-topbar-stop]"})
          (ui/tab-items
           {:tabs [[:all "All"] [:emoji "Emojis"] [:icon "Icons"] [:custom "Custom"]]
            :active @*tab
-           :on-change (fn [id _e]
+           :on-change (fn [id ^js e]
                         (reset! *tab id)
-                        (reset! *focus-region :search)
-                        (reset! *highlighted-index nil))})
+                        (reset! *highlighted-index nil)
+                        ;; Only return focus to search for genuine mouse
+                        ;; clicks. Programmatic .click() from keyboard
+                        ;; arrow-rove (handle-topbar-keys auto-activate)
+                        ;; has e.detail = 0; real clicks are >= 1. Keeps
+                        ;; arrow nav inside the topbar region.
+                        (when (and e (pos? (.-detail e)))
+                          (reset! *focus-region :search)))
+           :button-attrs {:data-topbar-stop "tab"}})
          [:div.tab-actions
           ;; color picker (always visible)
           (color-picker *color (fn [c]
@@ -4338,10 +4347,12 @@
                                                           :color c})))
                         :on-hover-end! (when preview-target-db-id
                                          (fn []
-                                           (state/set-state! :ui/icon-hover-preview nil))))
+                                           (state/set-state! :ui/icon-hover-preview nil)))
+                        :button-attrs {:data-topbar-stop "color"})
           ;; delete button
           (when del-btn?
             (shui/button {:variant :outline :size :sm :data-action "del"
+                          :data-topbar-stop "trash"
                           :on-click #(on-chosen nil)}
                          (shui/tabler-icon "trash" {:size 17})))]]
 
@@ -4368,11 +4379,11 @@
                                       (shui/popup-hide!)
                                       (reset-q!)))
 
-                                ;; Up Arrow / Shift+Tab: move to tab bar
+                                ;; Up Arrow / Shift+Tab: move to topbar at the active tab
                                 (or (= code 38)
                                     (and (= code 9) (.-shiftKey e)))
                                 (do (util/stop e)
-                                    (reset! *focus-region :tabs)
+                                    (reset! *focus-region :topbar)
                                     (reset! *highlighted-index nil)
                                     (when-let [^js cnt (some-> (rum/deref *input-ref) (.closest ".cp__emoji-icon-picker"))]
                                       (when-let [active-tab (.querySelector cnt "[data-active='true'].tab-item")]
