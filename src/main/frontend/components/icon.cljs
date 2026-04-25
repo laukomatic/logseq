@@ -1596,13 +1596,10 @@
                            :label (or (:name emoji) (:id emoji))
                            :data {:value (:id emoji)}})
                         emojis*)]
-    (pane-section
-     "Emojis"
-     icon-items
-     :show-header? false
-     :on-chosen (:on-chosen opts)
-     :on-hover (:on-hover opts)
-     :*virtuoso-ref (:*virtuoso-ref opts))))
+    (apply pane-section
+           "Emojis"
+           icon-items
+           (mapcat identity (assoc opts :show-header? false)))))
 
 (rum/defc icons-cp < rum/static
   [icons opts]
@@ -1612,13 +1609,10 @@
                            :label icon-name
                            :data {:value icon-name}})
                         icons)]
-    (pane-section
-     "Icons"
-     icon-items
-     :show-header? false
-     :on-chosen (:on-chosen opts)
-     :on-hover (:on-hover opts)
-     :*virtuoso-ref (:*virtuoso-ref opts))))
+    (apply pane-section
+           "Icons"
+           icon-items
+           (mapcat identity (assoc opts :show-header? false)))))
 
 ;; ============================================================================
 ;; Recently Used Assets
@@ -2575,7 +2569,8 @@
                                       :else                              :avatar)]
                    (reset! *mode initial-mode)
                    (assoc state ::update-web-query!
-                          (debounce (fn [q] (reset! *web-query-debounced q)) 500))))
+                          (debounce (fn [q] (reset! *web-query-debounced q)) 500)
+                          ::search-input-ref (rum/create-ref))))
    :did-mount (fn [state]
                 ;; Track picker open state
                 (reset! *asset-picker-open? true)
@@ -2646,7 +2641,7 @@
         *focus-region      (::focus-region state)
         *highlighted-index (::highlighted-index state)
         *web-images-result (::web-images-result state)
-        *search-input-ref  (rum/create-ref)
+        *search-input-ref  (::search-input-ref state)
         web-images         (rum/react *web-images-result)
         highlighted-idx    (rum/react *highlighted-index)
         loading? (rum/react *loading?)
@@ -3455,22 +3450,34 @@
                                  (recur (rest gs) offset items sections)))
                              {:items items :sections sections})))]
     (cond
-      ;; Search results active
-      (seq result)
-      (build-sections
-       {:label "Emojis" :items (when (and (seq (:emojis result)) (get section-states "Emojis" true))
-                                 (:emojis result))
-        :cols 9}
-       {:label "Icons" :items (when (and (seq (:icons result)) (get section-states "Icons" true))
-                                (:icons result))
-        :cols 9})
-
-      ;; Custom tab: 3 buttons
+      ;; Custom tab always shows its 3 buttons (search doesn't apply — Custom
+      ;; is for entering a *new* text/avatar/image, not searching presets).
       (= tab :custom)
       {:items [{:type :custom-text :id "custom-text"}
                {:type :custom-avatar :id "custom-avatar"}
                {:type :custom-image :id "custom-image"}]
        :sections [{:start 0 :count 3 :cols 3}]}
+
+      ;; Search results active. Tabs are content-type categories — keep the
+      ;; query persistent across tabs but only show matches that fit the
+      ;; current tab's type. :all shows both, :emoji only emoji matches,
+      ;; :icon only icon matches. (Custom is handled above.)
+      (seq result)
+      (let [tab-allows-emojis? (contains? #{:all :emoji} tab)
+            tab-allows-icons?  (contains? #{:all :icon} tab)]
+        (build-sections
+         {:label "Emojis"
+          :items (when (and tab-allows-emojis?
+                            (seq (:emojis result))
+                            (get section-states "Emojis" true))
+                   (:emojis result))
+          :cols 9}
+         {:label "Icons"
+          :items (when (and tab-allows-icons?
+                            (seq (:icons result))
+                            (get section-states "Icons" true))
+                   (:icons result))
+          :cols 9}))
 
       ;; All tab: recently used + emojis + icons (non-virtualized, limited items)
       (= tab :all)
@@ -3632,7 +3639,20 @@
                       (let [idx (or idx 0)
                             idx (min idx (max 0 (dec (count flat-items))))]
                         (reset! *focus-region :grid)
-                        (reset! *highlighted-index idx)))
+                        (reset! *highlighted-index idx)
+                        ;; Move DOM focus to the new tile so activeElement
+                        ;; matches `.is-highlighted` — keeps the WAI-APG
+                        ;; roving-focus pattern (single visible ring on the
+                        ;; current tile) and ensures Enter/Space target the
+                        ;; right button. data-item-id is rendered on every
+                        ;; tile regardless of highlight state, so the lookup
+                        ;; works against the current DOM without waiting for
+                        ;; a re-render.
+                        (when-let [cnt (get-cnt)]
+                          (when (< idx (count flat-items))
+                            (let [item-id (:id (nth flat-items idx))]
+                              (when-let [^js btn (.querySelector cnt (str "[data-item-id='" item-id "']"))]
+                                (.focus btn)))))))
 
         focus-tabs! (fn [& [tab-id]]
                       ;; If the picker provided a topbar-selector, use the
@@ -3803,7 +3823,8 @@
         keydown-handler
         (hooks/use-callback
          (fn [^js e]
-           (let [region @*focus-region]
+           (let [region @*focus-region
+                 code (.-keyCode e)]
              (if (and *tab (.-metaKey e) (.-altKey e))
                ;; ⌥⌘1/2/3 toggle section collapse on the All tab (icon-picker only)
                (when (= @*tab :all)
@@ -3959,7 +3980,7 @@
               hint])]))))]))
 
 (rum/defc color-picker
-  [*color on-select! & {:keys [on-hover! on-hover-end! button-attrs]}]
+  [*color on-select! & {:keys [on-hover! on-hover-end! button-attrs after-close!]}]
   (let [;; Defensive: never let the CSS sentinel "inherit" leak into React state.
         initial-color (let [v @*color] (when (and v (not= v "inherit")) v))
         [color, set-color!] (rum/use-state initial-color)
@@ -4016,7 +4037,30 @@
     [:button.color-picker-trigger
      (merge button-attrs
             {:ref *el
-             :on-click (fn [^js e] (shui/popup-show! (.-target e) content-fn {:content-props {:side "bottom" :side-offset 6}}))})
+             :on-click (fn [^js e]
+                         (shui/popup-show!
+                          (.-target e) content-fn
+                          {;; Disable shui's own focus-restore (a 16ms
+                           ;; setTimeout in popup/core.cljs:107-111 that
+                           ;; .focuses `.closest("[tabindex='0']")` of
+                           ;; the trigger). For our color trigger that
+                           ;; resolves to the active tab in the icon
+                           ;; picker's topbar (roving tabindex), which
+                           ;; would override the picker's manual focus
+                           ;; placement after color commit.
+                           :focus-trigger? false
+                           :content-props
+                           {:side "bottom"
+                            :side-offset 6
+                            ;; Also prevent Radix's default focus-restore
+                            ;; on close. By default it focuses *shui's*
+                            ;; hidden floating trigger button (rendered
+                            ;; at body level), outside the icon picker
+                            ;; subtree → capture-phase keydown listener
+                            ;; stops receiving arrow keys.
+                            :onCloseAutoFocus (fn [^js e]
+                                                (.preventDefault e)
+                                                (some-> after-close! (apply [])))}}))})
      (if color
        [:span.color-picker-fill {:style {:background-color color}}]
        [:span.color-picker-empty
@@ -4233,7 +4277,9 @@
                    ;; Avatar/image icons open asset picker, text icons open text-picker
                    (when (contains? #{:avatar :image :text} (:type normalized))
                      (reset! *view (if (= :text (:type normalized)) :text-picker :asset-picker)))
-                   (assoc s ::color (atom (or icon-color stored)))))}
+                   (assoc s ::color (atom (or icon-color stored))
+                          ::input-ref (rum/create-ref)
+                          ::result-ref (rum/create-ref))))}
   [state {:keys [on-chosen del-btn? icon-value page-title preview-target-db-id] :as opts}]
   (let [*q (::q state)
         *result (::result state)
@@ -4241,8 +4287,8 @@
         *color (::color state)
         *input-focused? (::input-focused? state)
         *view (::view state)
-        *input-ref (rum/create-ref)
-        *result-ref (rum/create-ref)
+        *input-ref (::input-ref state)
+        *result-ref (::result-ref state)
         *virtuoso-ref (::virtuoso-ref state)
         result @*result
         ;; When the picker is opened against an entity, derive del-btn? reactively
@@ -4462,6 +4508,18 @@
                                                       (assoc :color c)
                                                       (assoc-in [:data :color] c)
                                                       (assoc-in [:data :backgroundColor] c)) true)))
+                        ;; After Radix's FocusScope unmounts (the popover
+                        ;; close), restore focus to the highlighted tile so
+                        ;; activeElement matches `.is-highlighted`. Running
+                        ;; in :after-close! (not on-select!) bypasses
+                        ;; Radix's FocusScope trap which would otherwise
+                        ;; undo the focus while the popover is mounted.
+                        :after-close! (fn []
+                                        (when @*highlighted-index
+                                          (reset! *focus-region :grid)
+                                          (when-let [^js cnt (some-> (rum/deref *input-ref) (.closest ".cp__emoji-icon-picker"))]
+                                            (when-let [^js btn (.querySelector cnt "button.is-highlighted")]
+                                              (.focus btn)))))
                         :on-hover! (when preview-target-db-id
                                      (fn [c]
                                        (state/set-state! :ui/icon-hover-preview
@@ -4550,11 +4608,17 @@
          ;; Custom tab always shows its own content (Text/Avatar/Image buttons)
          (if (= @*tab :custom)
            (custom-tab-cp *q page-title *color *view icon-value opts)
-           ;; Other tabs: show search results if present, else show tab content
+           ;; Other tabs: show search results if present, else show tab content.
+           ;; Tabs scope the search results by content type — :all shows both,
+           ;; :emoji only emojis, :icon only icons. Mirrors the same gate in
+           ;; compute-flat-items so the visible grid and the keyboard-nav
+           ;; flat-items list stay in sync.
            (if (seq result)
              (let [section-states (rum/react *section-states)
-                   has-emojis? (seq (:emojis result))
-                   has-icons? (seq (:icons result))]
+                   tab-allows-emojis? (contains? #{:all :emoji} @*tab)
+                   tab-allows-icons?  (contains? #{:all :icon} @*tab)
+                   has-emojis? (and tab-allows-emojis? (seq (:emojis result)))
+                   has-icons?  (and tab-allows-icons?  (seq (:icons result)))]
                (if (or has-emojis? has-icons?)
                  (let [both? (and has-emojis? has-icons?)]
                    [:div.flex.flex-1.flex-col.search-result
