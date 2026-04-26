@@ -4063,20 +4063,32 @@
               ;; ── Down ──────────────────────────────────────────────
               (= code 40)
               (do (util/stop e)
-                  (cond
-                    ;; Default → Custom (toggle within control col)
-                    (= idx 0) (go! (nth stops 1))
-                    ;; Custom → wrap to Default
-                    (= idx 1) (go! (nth stops 0))
-                    ;; Preset row 0 → preset row 1, same column
-                    (and (in-grid? idx) (= 0 (preset-row idx)))
-                    (let [target (+ 2 cols (preset-col idx))]
-                      (when (< target n) (go! (nth stops target))))
-                    ;; Preset row 1 → wrap to row 0, same column
-                    (and (in-grid? idx) (= 1 (preset-row idx)))
-                    (go! (nth stops (+ 2 (preset-col idx))))
-                    :else
-                    (go! (nth stops (mod (inc (max idx -1)) n)))))
+                  ;; When the picker pane is open, ArrowDown from the
+                  ;; bottom row (or from the Custom tile) hops into the
+                  ;; hex input rather than wrapping. Lets keyboard users
+                  ;; flow swatches → hex without leaving via Tab.
+                  (let [hop-to-pane!
+                        (fn []
+                          (and picker-open?
+                               (when-let [^js root (.closest parent ".color-picker-popover")]
+                                 (when-let [^js inp (.querySelector root ".color-picker-hex-input")]
+                                   (.focus inp)
+                                   true))))]
+                    (cond
+                      ;; Default → Custom (toggle within control col)
+                      (= idx 0) (go! (nth stops 1))
+                      ;; Custom → hop to hex input if pane open, else wrap
+                      (= idx 1) (when-not (hop-to-pane!) (go! (nth stops 0)))
+                      ;; Preset row 0 → preset row 1, same column
+                      (and (in-grid? idx) (= 0 (preset-row idx)))
+                      (let [target (+ 2 cols (preset-col idx))]
+                        (when (< target n) (go! (nth stops target))))
+                      ;; Preset row 1 → hop to hex input if open, else wrap
+                      (and (in-grid? idx) (= 1 (preset-row idx)))
+                      (when-not (hop-to-pane!)
+                        (go! (nth stops (+ 2 (preset-col idx)))))
+                      :else
+                      (go! (nth stops (mod (inc (max idx -1)) n))))))
 
               ;; ── Up ────────────────────────────────────────────────
               (= code 38)
@@ -4194,6 +4206,8 @@
            recents
            open?]}]
   (let [*hex-ref (rum/use-ref nil)
+        *pane-ref (rum/use-ref nil)
+        *pad-ref (rum/use-ref nil)
         ;; Resolve the typed value once. `:hex` is the canonical hex when
         ;; resolution succeeds (any kind of match). `picked` reflects only
         ;; exact-resolvable values for purposes of contrast indicator.
@@ -4230,8 +4244,30 @@
        (when-let [^js el (rum/deref *hex-ref)]
          (set-input-font! (.-font (js/getComputedStyle el)))))
      [])
+    ;; Strip react-colorful's two interactive sliders (SV pad + hue) from
+    ;; the Tab order. The library hard-codes `tabIndex={0}` on them and
+    ;; offers no prop to opt out. Mouse/touch interaction is unaffected.
+    ;; Keyboard users navigate swatches → hex → recents directly via
+    ;; Tab/Shift+Tab and arrow shortcuts; the pad is mouse/touch only.
+    (hooks/use-effect!
+     (fn []
+       (when-let [^js root (rum/deref *pad-ref)]
+         (doseq [^js node (array-seq (.querySelectorAll root ".react-colorful__interactive"))]
+           (.setAttribute node "tabindex" "-1"))))
+     [])
+    ;; Tab guard for the collapse animation. The pane stays in the DOM
+    ;; while CSS Grid animates from 1fr→0fr, so its hex input + pad +
+    ;; recents would otherwise remain in the focus tree even when not
+    ;; visible. `inert` removes them; toggling via effect keeps the
+    ;; data-open transition in sync.
+    (hooks/use-effect!
+     (fn []
+       (when-let [^js el (rum/deref *pane-ref)]
+         (set! (.-inert el) (not open?))))
+     [open?])
     [:div.color-picker-pane
-     {:data-open (str (boolean open?))}
+     {:ref *pane-ref
+      :data-open (str (boolean open?))}
      [:div.color-picker-pane__inner
       ;; Hex input row
       [:div.color-picker-hex-row
@@ -4316,7 +4352,31 @@
                             (set-hex-invalid! false)
                             (when hex
                               (set-hover! {:color hex})
-                              (some-> on-hover! (apply [hex]))))))}]
+                              (some-> on-hover! (apply [hex]))))
+
+                          ;; ArrowUp → focus the swatches grid. Lands on
+                          ;; the active swatch when one is selected, else
+                          ;; the custom-rainbow tile. Single-line input
+                          ;; has no meaningful Up cursor target, so we
+                          ;; reclaim the key for cross-region nav.
+                          (= (.-key e) "ArrowUp")
+                          (when-let [^js root (some-> (.-target e)
+                                                      (.closest ".color-picker-popover"))]
+                            (when-let [^js btn (or (.querySelector root ".color-swatch.is-selected")
+                                                   (.querySelector root ".color-swatch--custom"))]
+                              (.preventDefault e)
+                              (.focus btn)))
+
+                          ;; ArrowDown → focus the first recent. Skips
+                          ;; the SV pad / hue slider (which sit outside
+                          ;; the Tab order). No-op when no recents exist.
+                          (and (= (.-key e) "ArrowDown") (seq recents))
+                          (when-let [^js root (some-> (.-target e)
+                                                      (.closest ".color-picker-popover"))]
+                            (when-let [^js btn (.querySelector root
+                                                               ".color-picker-recents__row .color-swatch--recent")]
+                              (.preventDefault e)
+                              (.focus btn)))))}]
        ;; Ghost suffix: muted suggestion text rendered after the typed
        ;; value when a prefix completion exists. Hidden when the input is
        ;; in an invalid state to avoid noise.
@@ -4364,6 +4424,7 @@
 
       ;; SV pad + Hue slider via react-colorful's HexColorPicker
       [:div.color-picker-pad-row
+       {:ref *pad-ref}
        (hex-color-picker
         {:color active-color
          :on-change (fn [^js hex]
@@ -4386,63 +4447,153 @@
       (when (seq recents)
         (recents-lane
          {:recents recents
+          :hex-input hex-input
           :set-hover! set-hover!
           :on-hover! on-hover!
-          :on-select! on-commit!}))]]))
+          :on-select! on-commit!
+          :on-escape! on-escape!
+          :on-up! (fn []
+                    (when-let [^js el (rum/deref *hex-ref)]
+                      (.focus el)
+                      (.select el)))
+          :on-down! (fn []
+                      (when-let [^js root (some-> (rum/deref *pane-ref)
+                                                  (.closest ".color-picker-popover"))]
+                        (when-let [^js btn (or (.querySelector root ".color-swatch.is-selected")
+                                               (.querySelector root ".color-swatch--custom")
+                                               (.querySelector root ".color-swatch"))]
+                          (.focus btn))))}))]]))
 
 (rum/defc recents-lane
   "Horizontal row of up to 6 recently-used custom colors. Header label
-   matches existing pane-section typography (12px Inter Medium muted)."
-  [{:keys [recents on-select! set-hover! on-hover!]}]
+   matches existing pane-section typography (12px Inter Medium muted).
+
+   Keyboard model: roving tabindex (one Tab stop into the row, arrows
+   rove within). ArrowUp leaves to the hex input; ArrowDown wraps to
+   the swatches grid (closing the vertical loop). Escape collapses the
+   pane back to the swatches grid."
+  [{:keys [recents hex-input on-select! set-hover! on-hover!
+           on-escape! on-up! on-down!]}]
   (when (seq recents)
-    [:div.color-picker-recents
-     [:div.color-picker-recents__header "Recently used"]
-     [:div.color-picker-recents__row
-      {:role "radiogroup"
-       :aria-label "Recently used colors"}
-      (for [hex recents]
-        (let [{:keys [light dark differs?]} (or (colors/adjust-for-both-themes hex)
-                                                {:light hex :dark hex :differs? false})
-              picked-name (some-> hex colors/hex->name colors/humanize-name)]
-          (shui/tooltip-provider
-           {:key hex :delay-duration 300}
-           (shui/tooltip
-            (shui/tooltip-trigger
-             {:as-child true}
-             [:button.color-swatch.color-swatch--recent
-              {:role "radio"
-               :aria-checked "false"
-               :aria-label (or picked-name hex)
-               :tab-index "-1"
-               :on-mouse-enter (fn []
-                                 (when set-hover!
-                                   (set-hover! {:color hex}))
-                                 (some-> on-hover! (apply [hex])))
-               :on-focus (fn []
-                           (when set-hover!
-                             (set-hover! {:color hex}))
-                           (some-> on-hover! (apply [hex])))
-               :on-click (fn [] (some-> on-select! (apply [hex])))}
-              ;; Half-pie split: left half = dark-mode rendering, right
-              ;; half = light-mode rendering. When picked needs no
-              ;; adjustment in either mode, both halves match and the
-              ;; swatch reads as a solid circle.
-              [:span.swatch-fill
-               {:class (when differs? "is-split")
-                :style {"--dark-color" dark
-                        "--light-color" light}}]])
-            (shui/tooltip-content
-             {:side "top" :align "center" :show-arrow true}
-             [:div.text-center
-              ;; Title: humanized name when reverse-lookup hits, else
-              ;; the picked hex itself.
-              [:div.font-medium (or picked-name hex)]
-              ;; Dual-mode hex display only when the picked color
-              ;; renders differently across themes.
-              (when differs?
-                [:div.text-xs.opacity-70.mt-0.5
-                 [:div.flex.items-center.gap-1.justify-center
-                  [:span.font-mono dark] [:span "·"] [:span.font-mono light]]])])))))]]))
+    (let [*parent (rum/use-ref nil)
+          ;; Active recent index for roving tabindex. Default 0 so the
+          ;; first Tab into the row lands on the leftmost swatch.
+          [active-idx set-active-idx!] (rum/use-state 0)]
+      [:div.color-picker-recents
+       [:div.color-picker-recents__header "Recently used"]
+       [:div.color-picker-recents__row
+        {:ref *parent
+         :role "radiogroup"
+         :aria-label "Recently used colors"
+         :on-key-down
+         (fn [^js e]
+           (when-let [^js parent (rum/deref *parent)]
+             (let [stops   (vec (array-seq (.querySelectorAll parent ".color-swatch--recent")))
+                   n       (count stops)
+                   ;; Recents flex-wrap into rows of 7 (CSS-driven). Detect
+                   ;; the visual row width by counting how many leading
+                   ;; stops share the first stop's offsetTop — robust even
+                   ;; if the row width changes later.
+                   cols    (if (zero? n)
+                             0
+                             (let [first-top (.-offsetTop ^js (first stops))]
+                               (count (take-while #(= (.-offsetTop ^js %) first-top) stops))))
+                   focused js/document.activeElement
+                   idx     (max 0 (.indexOf stops focused))
+                   row     (if (pos? cols) (quot idx cols) 0)
+                   col     (if (pos? cols) (mod idx cols) idx)
+                   row-start (* row cols)
+                   row-end   (min (+ row-start cols) n)
+                   row-width (- row-end row-start)
+                   go!     (fn [i]
+                             (set-active-idx! i)
+                             (some-> ^js (nth stops i) .focus))]
+               (cond
+                 ;; Left/Right wrap WITHIN the current row only.
+                 (= (.-key e) "ArrowLeft")
+                 (do (util/stop e)
+                     (go! (+ row-start (mod (dec col) row-width))))
+
+                 (= (.-key e) "ArrowRight")
+                 (do (util/stop e)
+                     (go! (+ row-start (mod (inc col) row-width))))
+
+                 (= (.-key e) "Home")
+                 (do (util/stop e) (go! 0))
+
+                 (= (.-key e) "End")
+                 (do (util/stop e) (go! (dec n)))
+
+                 ;; ArrowUp: previous row at same column, or escape to
+                 ;; hex input when already in the top row.
+                 (= (.-key e) "ArrowUp")
+                 (do (util/stop e)
+                     (if (pos? row)
+                       (go! (+ (* (dec row) cols) col))
+                       (some-> on-up! (apply []))))
+
+                 ;; ArrowDown: next row at same column (clamped to last
+                 ;; available when the row is partial), or escape to the
+                 ;; swatches grid when there's no row below.
+                 (= (.-key e) "ArrowDown")
+                 (let [next-row-start (* (inc row) cols)]
+                   (util/stop e)
+                   (if (< next-row-start n)
+                     (let [next-row-end (min (+ next-row-start cols) n)]
+                       (go! (min (+ next-row-start col) (dec next-row-end))))
+                     (some-> on-down! (apply []))))
+
+                 ;; Escape collapses the pane (same callback the hex
+                 ;; input uses) so the user can back out of the picker
+                 ;; from any region.
+                 (= (.-key e) "Escape")
+                 (do (util/stop e) (some-> on-escape! (apply [])))))))}
+        (for [[i hex] (map-indexed vector recents)]
+          (let [{:keys [light dark differs?]} (or (colors/adjust-for-both-themes hex)
+                                                  {:light hex :dark hex :differs? false})
+                picked-name (some-> hex colors/hex->name colors/humanize-name)
+                checked? (and hex-input (= hex hex-input))]
+            (shui/tooltip-provider
+             {:key hex :delay-duration 300}
+             (shui/tooltip
+              (shui/tooltip-trigger
+               {:as-child true}
+               [:button.color-swatch.color-swatch--recent
+                {:role "radio"
+                 :aria-checked (str (boolean checked?))
+                 :aria-label (or picked-name hex)
+                 :tab-index (if (= i active-idx) "0" "-1")
+                 :class (when checked? "is-selected")
+                 :on-mouse-enter (fn []
+                                   (when set-hover!
+                                     (set-hover! {:color hex}))
+                                   (some-> on-hover! (apply [hex])))
+                 :on-focus (fn []
+                             (set-active-idx! i)
+                             (when set-hover!
+                               (set-hover! {:color hex}))
+                             (some-> on-hover! (apply [hex])))
+                 :on-click (fn [] (some-> on-select! (apply [hex])))}
+                ;; Half-pie split: left half = dark-mode rendering, right
+                ;; half = light-mode rendering. When picked needs no
+                ;; adjustment in either mode, both halves match and the
+                ;; swatch reads as a solid circle.
+                [:span.swatch-fill
+                 {:class (when differs? "is-split")
+                  :style {"--dark-color" dark
+                          "--light-color" light}}]])
+              (shui/tooltip-content
+               {:side "top" :align "center" :show-arrow true}
+               [:div.text-center
+                ;; Title: humanized name when reverse-lookup hits, else
+                ;; the picked hex itself.
+                [:div.font-medium (or picked-name hex)]
+                ;; Dual-mode hex display only when the picked color
+                ;; renders differently across themes.
+                (when differs?
+                  [:div.text-xs.opacity-70.mt-0.5
+                   [:div.flex.items-center.gap-1.justify-center
+                    [:span.font-mono dark] [:span "·"] [:span.font-mono light]]])])))))]])))
 
 (rum/defc color-picker-popover
   "Whole popover body: swatch grid + animated picker pane + recents lane.
