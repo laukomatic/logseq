@@ -5235,11 +5235,29 @@
                         ;; Radix's FocusScope trap which would otherwise
                         ;; undo the focus while the popover is mounted.
                         :after-close! (fn []
-                                        (when @*highlighted-index
-                                          (reset! *focus-region :grid)
-                                          (when-let [^js cnt (some-> (rum/deref *input-ref) (.closest ".cp__emoji-icon-picker"))]
-                                            (when-let [^js btn (.querySelector cnt "button.is-highlighted")]
-                                              (.focus btn)))))
+                                        (let [^js cnt (some-> (rum/deref *input-ref) (.closest ".cp__emoji-icon-picker"))
+                                              idx @*highlighted-index
+                                              btn (when (and idx cnt)
+                                                    (.querySelector cnt "button.is-highlighted"))]
+                                          (cond
+                                            ;; Highlighted icon present — restore focus to
+                                            ;; the tile so the user resumes where they left
+                                            ;; off in the grid.
+                                            btn
+                                            (do (reset! *focus-region :grid)
+                                                (.focus btn))
+
+                                            ;; No highlight to return to (e.g. user opened
+                                            ;; the color picker without first navigating to
+                                            ;; an icon). Fall back to the search input so
+                                            ;; focus stays *inside* the picker container —
+                                            ;; the capture-phase keydown listener only fires
+                                            ;; for keys whose target is in the subtree, so
+                                            ;; without this fallback the picker would appear
+                                            ;; visually open but reject all keys.
+                                            cnt
+                                            (do (reset! *focus-region :search)
+                                                (some-> (rum/deref *input-ref) (.focus))))))
                         :on-hover! (when preview-target-db-id
                                      (fn [c]
                                        (state/set-state! :ui/icon-hover-preview
