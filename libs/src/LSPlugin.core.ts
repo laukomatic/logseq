@@ -74,8 +74,14 @@ function diffSettings(
   for (const k of keys) {
     const a = prev[k], b = next[k]
     if (a === b) continue
-    if (!(k in prev)) { parts.push(`+${k}: ${fmt(b)}`); continue }
-    if (!(k in next)) { parts.push(`-${k}`); continue }
+    if (!(k in prev)) {
+      parts.push(`+${k}: ${fmt(b)}`)
+      continue
+    }
+    if (!(k in next)) {
+      parts.push(`-${k}`)
+      continue
+    }
     // deep equality fallback via JSON to skip ref-only changes
     try {
       if (JSON.stringify(a) === JSON.stringify(b)) continue
@@ -779,10 +785,14 @@ class PluginLocal extends EventEmitter<
       dirPathInstalled
     )
 
-    entry = convertToLSPResource(
-      withFileProtocol(path.normalize(entryPath)),
-      this.dotPluginsRoot
-    )
+    entry = withFileProtocol(path.normalize(entryPath))
+
+    if (!this._options.effect) {
+      entry = convertToLSPResource(
+        entry,
+        this.dotPluginsRoot
+      )
+    }
 
     this._options.entry = entry
   }
@@ -1563,8 +1573,10 @@ class LSPluginCore
         const p = this.ensurePlugin(identity)
         await p.reload()
       } catch (e) {
-        try { this.getPluginLogger(identity)?.error('reload failed', e) }
-        catch (_) { /* unknown plugin */ }
+        try {
+          this.getPluginLogger(identity)
+            ?.error('reload failed', e)
+        } catch (_) { /* unknown plugin */ }
         debug(e)
       }
     }
@@ -1789,7 +1801,8 @@ class LSPluginCore
 
     themes.push(opt)
     this.emit('themes-changed', this.themes, { id, ...opt })
-    this.getPluginLogger(id)?.debug('theme registered', opt?.name || (opt as any)?.url || '')
+    this.getPluginLogger(id)
+      ?.debug('theme registered', opt?.name || (opt as any)?.url || '')
   }
 
   async selectTheme(
